@@ -129,7 +129,7 @@ install_packages() {
 	export PATH="$STAGING_AREA/venv/bin:$PATH"
 	python3 -m pip install mako 'aqtinstall==3.3.0'
 	if [ "$ENABLE_PACKAGE_M2K" = ON ]; then
-		for package in boost@1.85 volk glib matio; do
+		for package in boost@1.85 volk glib libmatio; do
 			brew list --versions "$package" >/dev/null 2>&1 || brew install "$package"
 		done
 		# Use the versioned prefix directly; leave existing Python symlinks intact.
