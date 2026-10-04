@@ -34,9 +34,6 @@ jobs:
           with:
             fetch-depth: 0
 
-        - name: Test build scripts
-          run: python3 ci/macOS/test_build_scripts.py
-
         - name: Build and Install Dependencies
           run: |
             bash ci/macOS/install_macos_deps.sh
@@ -56,7 +53,7 @@ jobs:
 
         - name: Verify relocated standalone app
           run: |
-            ditto build/package/Scopy.app "$RUNNER_TEMP/Scopy.app"
+            ditto build/Scopy.app "$RUNNER_TEMP/Scopy.app"
             python3 ci/macOS/verify_bundle.py "$RUNNER_TEMP/Scopy.app" "$(uname -m)"
             env -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH -u QT_QPA_PLATFORM "$RUNNER_TEMP/Scopy.app/Contents/MacOS/Scopy" --accept-license --script="$GITHUB_WORKSPACE/ci/macOS/smoke.js" > build/package-smoke.log 2>&1
             grep -q 'Script finished with status 0' build/package-smoke.log

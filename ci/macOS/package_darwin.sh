@@ -1,45 +1,233 @@
 #!/bin/bash
-# Package a separate copy; leave the incremental development bundle untouched.
-set -euo pipefail
-if [[ ${1:-} == --help ]]; then
-	echo "Usage: bash ci/macOS/package_darwin.sh"
-	echo "Outputs: BUILDDIR/package/Scopy.app, BUILDDIR/ScopyApp.zip, BUILDDIR/Scopy.dmg"
-	exit 0
+
+# macOS Qt6 Packaging Script
+# =====================================
+# After the build is complete, this script packages the Scopy.app bundle by fixing library paths and bundling dependencies.
+# It also creates a DMG installer and a ZIP archive for distribution.
+# Usage: ./package_darwin.sh
+
+set -ex
+REPO_SRC=$(git rev-parse --show-toplevel)
+source "$REPO_SRC/ci/macOS/macos_config.sh"
+
+pushd "$BUILDDIR"
+
+SCOPYPLUGINS=$(find "$BUILDDIR/Scopy.app/Contents/Resources/packages" -name "*.dylib" -type f)
+SCOPYLIBS=$(find "$BUILDDIR/Scopy.app/Contents/Frameworks" -name "*.dylib" -type f)
+
+IFS=$'\n' SEARCH_PATHS=($(find "$BUILDDIR/Scopy.app/Contents/Resources/packages" -name "plugins" -type d 2>/dev/null))
+SEARCH_PATHS+=($STAGING_AREA_DEPS/lib)
+SEARCH_PATHS+=($BUILDDIR/Scopy.app/Contents/Frameworks/)
+PREFIXED_SEARCH_PATHS=()
+for p in "${SEARCH_PATHS[@]}"; do
+    PREFIXED_SEARCH_PATHS+=(--search-path "$p")
+done
+echo "### Copy DLLs to Frameworks folder"
+cp -avR $STAGING_AREA_DEPS/lib/iio.framework Scopy.app/Contents/Frameworks/
+cp -avR $STAGING_AREA_DEPS/lib/ad9361.framework Scopy.app/Contents/Frameworks/
+cp -avR $STAGING_AREA_DEPS/lib/genalyzer.framework Scopy.app/Contents/Frameworks/
+mkdir -p $BUILDDIR/Scopy.app/Contents/MacOS/plugins/resources
+
+libqwtpath=${STAGING_AREA_DEPS}/lib/libqwt_scopy.6.4.0.dylib #hardcoded
+libqwtid="$(otool -D ${libqwtpath} | tail -1)"
+echo "=== Fixing libqwt"
+# Only modify the bundled binaries, not the installed dependency library.
+otool -L ${libqwtpath}
+install_name_tool -change ${libqwtid} ${libqwtpath} ./Scopy.app/Contents/MacOS/Scopy
+for dylib in ${SCOPYLIBS} ${SCOPYPLUGINS}
+do
+	[ -z "$(otool -L ${dylib} | grep libqwt_scopy.*dylib)" ] || install_name_tool -change ${libqwtid} ${libqwtpath} ${dylib}
+	otool -L $dylib
+done
+
+
+iiorpath="$(otool -D ./Scopy.app/Contents/Frameworks/iio.framework/iio | grep @rpath)"
+iioid=${iiorpath#"@rpath/"}
+
+ad9361rpath="$(otool -D ./Scopy.app/Contents/Frameworks/ad9361.framework/ad9361 | grep @rpath)"
+ad9361id=${ad9361rpath#"@rpath/"}
+
+libusbpath="$(otool -L ./Scopy.app/Contents/Frameworks/iio.framework/iio | grep libusb | cut -d " " -f 1 | awk '{$1=$1};1')"
+libusbid="$(echo ${libusbpath} | rev | cut -d "/" -f 1 | rev)"
+cp ${libusbpath} ./Scopy.app/Contents/Frameworks/
+chmod 755 ./Scopy.app/Contents/Frameworks/libusb*dylib
+
+# Copy libm2k if it exists (M2K package is disabled but deps are still built)
+m2kpath=${STAGING_AREA_DEPS}/lib/libm2k.?.?.?.dylib
+if ls ${m2kpath} 1>/dev/null 2>&1; then
+	m2krpath="$(otool -D ${m2kpath} | grep @rpath)"
+	m2kid=${m2krpath#"@rpath/"}
+	cp ${STAGING_AREA_DEPS}/lib/libm2k.?.?.?.dylib ./Scopy.app/Contents/Frameworks
+	install_name_tool -id @executable_path/../Frameworks/${m2kid} ./Scopy.app/Contents/Frameworks/${m2kid}
 fi
-[[ $# == 0 ]] || { echo "Unexpected argument: $1" >&2; exit 1; }
-# shellcheck source=ci/macOS/macos_common.sh
-source "$(dirname "$0")/macos_common.sh"
-require_native_macos
-setup_build_environment
-[[ -d "$BUILDDIR/Scopy.app" ]] || { echo "Run build_macos.sh first." >&2; exit 1; }
-[[ -x "$STAGING_AREA/build/iio-emu/iio-emu" ]] || { echo "IIO-Emulator has not been built." >&2; exit 1; }
-APP="$BUILDDIR/package/Scopy.app"
-# ditto merges directories; reject reusing a packaged bundle to avoid stale files.
-[[ ! -e $APP ]] || { echo "Package destination exists: $APP; move it aside before repackaging." >&2; exit 1; }
-mkdir -p "$BUILDDIR/package"
-ditto "$BUILDDIR/Scopy.app" "$APP"
-cp "$STAGING_AREA/build/iio-emu/iio-emu" "$APP/Contents/MacOS/"
-mkdir -p "$APP/Contents/PlugIns"
+
+if ls "$STAGING_AREA_DEPS/lib/libsigrokdecode"* 1>/dev/null 2>&1; then
+	echo "### Get python version"
+	brewprefix=$(brew --prefix python3)
+	pyversion=${brewprefix##*@} # extract the text after the last '@'
+	pythonpath=$brewprefix/Frameworks/Python.framework/Versions/$pyversion/Python
+	pythonidrpath="$(otool -D $pythonpath | head -2 | tail -1)"
+
+	if [ -z $pyversion ]; then
+		echo "No Python paths found"
+		exit 1
+	fi
+	echo " - Found python$pyversion at $pythonpath"
+	pythonid=${pythonidrpath#"$(brew --prefix python3)/Frameworks/"}
+	cp -R $(brew --prefix python3)/Frameworks/Python.framework Scopy.app/Contents/Frameworks/
+fi
+
+echo "=== Copying libsigrokdecode protocol decoders"
+if [ -d $STAGING_AREA_DEPS/share/libsigrokdecode/decoders ]; then
+	mkdir -p Scopy.app/Contents/Resources/decoders
+	cp -R $STAGING_AREA_DEPS/share/libsigrokdecode/decoders/* Scopy.app/Contents/Resources/decoders/
+fi
+
+echo "### Fixing scopy libraries and plugins "
+for dylib in ${SCOPYLIBS} ${SCOPYPLUGINS}
+do
+	echo "--- FIXING LIB: ${dylib##*/}"
+	dylibbundler --no-codesign --overwrite-files --bundle-deps --create-dir \
+		--fix-file $dylib \
+		--dest-dir $BUILDDIR/Scopy.app/Contents/Frameworks/ \
+		--install-path @executable_path/../Frameworks/ \
+		"${PREFIXED_SEARCH_PATHS[@]}"
+done
+
+echo "### Fixing Genalyzer"
+echo $STAGING_AREA_DEPS/lib | dylibbundler --no-codesign --overwrite-files --bundle-deps --create-dir \
+	--fix-file $BUILDDIR/Scopy.app/Contents/Frameworks/genalyzer.framework/genalyzer \
+	--dest-dir $BUILDDIR/Scopy.app/Contents/Frameworks/ \
+	--install-path @executable_path/../Frameworks/ \
+	--search-path $BUILDDIR/Scopy.app/Contents/Frameworks/
+
+echo "### Fixing Scopy binary"
+dylibbundler -ns -of -b \
+	--fix-file $BUILDDIR/Scopy.app/Contents/MacOS/Scopy \
+	--dest-dir $BUILDDIR/Scopy.app/Contents/Frameworks \
+	--install-path @executable_path/../Frameworks \
+	"${PREFIXED_SEARCH_PATHS[@]}"
+
+echo "### Fixing the frameworks dylibbundler failed to copy"
+echo "=== Fixing iio.framework"
+install_name_tool -id @executable_path/../Frameworks/${iioid} ./Scopy.app/Contents/Frameworks/iio.framework/iio
+install_name_tool -id @executable_path/../Frameworks/${iioid} ./Scopy.app/Contents/Frameworks/${iioid}
+install_name_tool -change ${iiorpath} @executable_path/../Frameworks/${iioid} ./Scopy.app/Contents/MacOS/Scopy
+for dylib in ${SCOPYLIBS} ${SCOPYPLUGINS}
+do
+	otool -L $dylib
+	[ -z "$(otool -L ${dylib}| grep iio.framework)" ] && echo "SKIP ${dylib##*/}" || install_name_tool -change ${iiorpath} @executable_path/../Frameworks/${iioid} ${dylib}
+done
+
+echo "=== Fixing ad9361.framework"
+install_name_tool -id @executable_path/../Frameworks/${ad9361id} ./Scopy.app/Contents/Frameworks/ad9361.framework/ad9361
+install_name_tool -id @executable_path/../Frameworks/${ad9361id} ./Scopy.app/Contents/Frameworks/${ad9361id}
+install_name_tool -change ${iiorpath} @executable_path/../Frameworks/${iioid} ./Scopy.app/Contents/Frameworks/${ad9361id}
+if ls ./Scopy.app/Contents/Frameworks/libgnuradio-iio* 1>/dev/null 2>&1; then
+	install_name_tool -change ${ad9361rpath} @executable_path/../Frameworks/${ad9361id} ./Scopy.app/Contents/Frameworks/libgnuradio-iio*
+fi
+
+echo "=== Fixing libusb"
+install_name_tool -id @executable_path/../Frameworks/${libusbid} ./Scopy.app/Contents/Frameworks/${libusbid}
+install_name_tool -change ${libusbpath} @executable_path/../Frameworks/${libusbid} ./Scopy.app/Contents/Frameworks/iio.framework/iio
+
+if ls ./Scopy.app/Contents/Frameworks/libsigrokdecode* 1>/dev/null 2>&1; then
+	echo "=== Fixing python"
+	install_name_tool -id @executable_path/../Frameworks/${pythonid} ./Scopy.app/Contents/Frameworks/${pythonid}
+	python_sigrokdecode=$(otool -L ./Scopy.app/Contents/Frameworks/libsigrokdecode* | grep -i python | cut -d " " -f 1 | awk '{$1=$1};1')
+	[ -n "${python_sigrokdecode}" ] && install_name_tool -change ${python_sigrokdecode} @executable_path/../Frameworks/${pythonid} ./Scopy.app/Contents/Frameworks/libsigrokdecode*
+	python_scopy=$(otool -L ./Scopy.app/Contents/MacOS/Scopy | grep -i python | cut -d " " -f 1 | awk '{$1=$1};1')
+	[ -n "${python_scopy}" ] && install_name_tool -change ${python_scopy} @executable_path/../Frameworks/${pythonid} ./Scopy.app/Contents/MacOS/Scopy
+	for dylib in ${SCOPYLIBS} ${SCOPYPLUGINS}
+	do
+		otool -L $dylib
+		python=$(otool -L ${dylib} | grep -i python | cut -d " " -f 1 | awk '{$1=$1};1');
+		[ -z "${python}" ] && echo "SKIP ${dylib##*/}" || install_name_tool -change ${python} @executable_path/../Frameworks/${pythonid} ${dylib}
+	done
+fi
+
+echo "=== Fixing libserialport"
+libserialportpath="$(otool -L ./Scopy.app/Contents/Frameworks/iio.framework/iio | grep libserialport | cut -d " " -f 1 | awk '{$1=$1};1')"
+libserialportid="$(echo ${libserialportpath} | rev | cut -d "/" -f 1 | rev)"
+install_name_tool -change ${libserialportpath} @executable_path/../Frameworks/${libserialportid} ./Scopy.app/Contents/Frameworks/iio.framework/iio
+
+# Fix libm2k references if it was copied
+if ls ./Scopy.app/Contents/Frameworks/libm2k.?.?.?.dylib 1>/dev/null 2>&1; then
+	install_name_tool -change ${iiorpath} @executable_path/../Frameworks/${iioid} ./Scopy.app/Contents/Frameworks/libm2k.?.?.?.dylib
+fi
+
+if ls ./Scopy.app/Contents/Frameworks/libgnuradio-m2k* 1>/dev/null 2>&1; then
+	install_name_tool -change ${iiorpath} @executable_path/../Frameworks/${iioid} ./Scopy.app/Contents/Frameworks/libgnuradio-m2k*
+	if [ -n "${m2kid:-}" ]; then
+		install_name_tool -change ${m2krpath} @executable_path/../Frameworks/${m2kid} ./Scopy.app/Contents/Frameworks/libgnuradio-m2k*
+	fi
+fi
+
+if ls ./Scopy.app/Contents/Frameworks/libgnuradio-scopy* 1>/dev/null 2>&1; then
+	install_name_tool -change ${iiorpath} @executable_path/../Frameworks/${iioid} ./Scopy.app/Contents/Frameworks/libgnuradio-scopy*
+	if [ -n "${m2kid:-}" ]; then
+		install_name_tool -change ${m2krpath} @executable_path/../Frameworks/${m2kid} ./Scopy.app/Contents/Frameworks/libgnuradio-scopy*
+	fi
+fi
+
+echo "=== Fixing iio-emu + libtinyiiod"
+cp $REPO_SRC/iio-emu/build/iio-emu ./Scopy.app/Contents/MacOS/
+dylibbundler -ns -of -b \
+	--fix-file $BUILDDIR/Scopy.app/Contents/MacOS/iio-emu \
+	--dest-dir $BUILDDIR/Scopy.app/Contents/Frameworks/ \
+	--install-path @executable_path/../Frameworks/ \
+	"${PREFIXED_SEARCH_PATHS[@]}"
+
+echo "=== Adding Qt6 3D plugins"
+QT6_PLUGINS_PATH="${QT}/plugins"
 for plugin_dir in renderers sceneparsers; do
-	if [[ -d "$QT/plugins/$plugin_dir" ]]; then
-		mkdir -p "$APP/Contents/PlugIns/$plugin_dir"
-		while IFS= read -r -d '' plugin; do
-			cp "$plugin" "$APP/Contents/PlugIns/$plugin_dir/"
-		done < <(find "$QT/plugins/$plugin_dir" -maxdepth 1 -name '*.dylib' -type f -print0)
+	if [ -d "$QT6_PLUGINS_PATH/$plugin_dir" ]; then
+		mkdir -p "$BUILDDIR/Scopy.app/Contents/PlugIns/$plugin_dir"
+		# Do not copy debug symbol bundles into the runtime application.
+		find "$QT6_PLUGINS_PATH/$plugin_dir" -maxdepth 1 -name '*.dylib' -type f \
+			-exec cp {} "$BUILDDIR/Scopy.app/Contents/PlugIns/$plugin_dir/" \;
 	fi
 done
-# macdeployqt follows non-Qt dependencies too. Tell it about every plugin and
-# helper executable, not only the main executable (plugins are loaded dynamically).
-DEPLOY_ARGS=(-always-overwrite -verbose=2)
+
+echo "=== Bundle the Qt libraries & Create Scopy.dmg"
+DEPLOY_ARGS=(-verbose=3)
 while IFS= read -r -d '' library; do
 	DEPLOY_ARGS+=("-executable=$library")
-done < <(find "$APP/Contents/Frameworks" "$APP/Contents/Resources/packages" "$APP/Contents/PlugIns" -name '*.dylib' -type f -print0)
-DEPLOY_ARGS+=("-executable=$APP/Contents/MacOS/iio-emu")
-"$QT/bin/macdeployqt" "$APP" "${DEPLOY_ARGS[@]}"
-# Any missing/unbundled dependency fails packaging, rather than producing an app
-# that happens to work because Qt/Homebrew exists on the build machine.
-python3 "$REPO_SRC/ci/macOS/verify_bundle.py" "$APP" "$ARCH" --sanitize-rpaths
-codesign --force --deep --sign - "$APP"
-codesign --verify --deep --strict "$APP"
-ditto -c -k --keepParent "$APP" "$BUILDDIR/ScopyApp.zip"
-hdiutil create -ov -format UDZO -volname Scopy -srcfolder "$BUILDDIR/package" "$BUILDDIR/Scopy.dmg"
+done < <(find Scopy.app/Contents/PlugIns -name '*.dylib' -type f -print0)
+macdeployqt Scopy.app "${DEPLOY_ARGS[@]}"
+
+echo "=== Removing build-machine and duplicated LC_RPATH"
+# This is a packaging transformation, not part of the read-only bundle audit.
+while IFS= read -r -d '' binary; do
+	file -b "$binary" | grep -q 'Mach-O' || continue
+	seen_paths=()
+	# Select the native slice so universal Qt binaries do not repeat entries.
+	while IFS= read -r path; do
+		case "$path" in
+			/System/Library/*|/usr/lib/*) ;;
+			/*) install_name_tool -delete_rpath "$path" "$binary" ;;
+			*)
+				duplicate=false
+				for seen in "${seen_paths[@]}"; do
+					[ "$seen" != "$path" ] || duplicate=true
+				done
+				if [ "$duplicate" = true ]; then
+					install_name_tool -delete_rpath "$path" "$binary"
+				else
+					seen_paths+=("$path")
+				fi
+				;;
+		esac
+	done < <(otool -arch "$ARCH" -l "$binary" | awk '/cmd LC_RPATH/ {rpath=1} rpath && /path .*\(offset/ {sub(/^ *path /, ""); sub(/ \(offset.*$/, ""); print; rpath=0}')
+done < <(find Scopy.app -type f ! -path '*.dSYM/*' -print0)
+
+echo "=== Ad-hoc code signing"
+codesign --force --deep --sign - Scopy.app
+codesign --verify --deep --strict Scopy.app
+python3 "$REPO_SRC/ci/macOS/verify_bundle.py" Scopy.app "$ARCH"
+
+echo "=== Creating ScopyApp.zip"
+ditto -c -k --keepParent Scopy.app ScopyApp.zip
+macdeployqt Scopy.app -dmg -verbose=3
+codesign --verify --deep --strict Scopy.app
+popd

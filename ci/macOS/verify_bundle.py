@@ -14,9 +14,9 @@ def system_path(path):
     return path.startswith(("/System/Library/", "/usr/lib/"))
 
 
-def rpaths(binary):
+def rpaths(binary, arch):
     return re.findall(r"cmd LC_RPATH\s+cmdsize \d+\s+path (.*?) \(offset",
-                      output("otool", "-l", str(binary)))
+                      output("otool", "-arch", arch, "-l", str(binary)))
 
 
 def dependencies(load_commands):
@@ -26,27 +26,20 @@ def dependencies(load_commands):
                       r"\s+cmdsize \d+\s+name (.*?) \(offset", load_commands)
 
 
-def sanitize_rpaths(app):
-    """Remove build-machine paths from the generated package, before signing."""
-    app = pathlib.Path(app).resolve()
-    for binary in app.rglob("*"):
-        if any(p.endswith(".dSYM") for p in binary.parts) or not binary.is_file() or binary.is_symlink() or "Mach-O" not in output("file", "-b", str(binary)):
-            continue
-        seen = set()
-        for path in rpaths(binary):
-            if (path.startswith("/") and not system_path(path)) or path in seen:
-                subprocess.run(["install_name_tool", "-delete_rpath", path, str(binary)], check=True)
-            else:
-                seen.add(path)
-        if binary.parent == app / "Contents/MacOS" and "@executable_path/../Frameworks" not in rpaths(binary):
-            subprocess.run(["install_name_tool", "-add_rpath", "@executable_path/../Frameworks", str(binary)], check=True)
-
-
 def verify(app, arch):
     app = pathlib.Path(app).resolve()
     executable_dir = app / "Contents/MacOS"
     errors = []
     count = 0
+    main = executable_dir / "Scopy"
+    if not main.is_file():
+        raise RuntimeError("Missing main executable: " + str(main))
+
+    def expand(path, loader):
+        return pathlib.Path(path.replace("@loader_path", str(loader.parent))
+                            .replace("@executable_path", str(executable_dir)))
+
+    main_runpaths = [expand(path, main) for path in rpaths(main, arch)]
     for binary in app.rglob("*"):
         if any(p.endswith(".dSYM") for p in binary.parts) or not binary.is_file() or binary.is_symlink():
             continue
@@ -55,25 +48,26 @@ def verify(app, arch):
         count += 1
         if arch not in output("lipo", "-archs", str(binary)).split():
             errors.append(f"{binary}: missing {arch}")
-        runpaths = rpaths(binary)
+        runpaths = rpaths(binary, arch)
+        if len(runpaths) != len(set(runpaths)):
+            errors.append(f"{binary.relative_to(app)}: duplicate run-path")
         for path in runpaths:
             if path.startswith("/") and not system_path(path):
                 errors.append(f"{binary.relative_to(app)}: external run-path {path}")
 
-        def expand(path):
-            return pathlib.Path(path.replace("@loader_path", str(binary.parent))
-                                .replace("@executable_path", str(executable_dir)))
-
+        # Plugins loaded by Scopy inherit its run-path stack. Helper executables
+        # must resolve their dependencies using their own paths, not Scopy's.
+        search_paths = [expand(path, binary) for path in runpaths]
+        if binary.parent != executable_dir:
+            search_paths += main_runpaths
         for dependency in dependencies(output("otool", "-arch", arch, "-l", str(binary))):
             if system_path(dependency):
                 continue
             if dependency.startswith("@rpath/"):
-                candidates = [expand(p) / dependency[len("@rpath/"):] for p in runpaths]
-                # dyld also uses the executable's run-path stack.
-                candidates.append(app / "Contents/Frameworks" / dependency[len("@rpath/"):])
+                candidates = [p / dependency[len("@rpath/"):] for p in search_paths]
             else:
-                candidates = [expand(dependency)]
-            if not any(p.exists() and p.resolve().is_relative_to(app) for p in candidates):
+                candidates = [expand(dependency, binary)]
+            if not any(p.is_absolute() and p.is_file() and p.resolve().is_relative_to(app) for p in candidates):
                 errors.append(f"{binary.relative_to(app)}: unbundled dependency {dependency}")
     if not count:
         errors.append("No Mach-O binaries found")
@@ -83,6 +77,4 @@ def verify(app, arch):
 
 
 if __name__ == "__main__":
-    if "--sanitize-rpaths" in sys.argv[3:]:
-        sanitize_rpaths(sys.argv[1])
     verify(sys.argv[1], sys.argv[2])
