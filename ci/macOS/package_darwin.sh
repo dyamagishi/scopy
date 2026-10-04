@@ -24,6 +24,11 @@ for p in "${SEARCH_PATHS[@]}"; do
 done
 echo "### Copy DLLs to Frameworks folder"
 cp -avR $STAGING_AREA_DEPS/lib/iio.framework Scopy.app/Contents/Frameworks/
+# libiio's build bundle contains an empty top-level Tools directory when
+# WITH_TESTS=OFF. It is not a valid sealed framework resource; remove only if empty.
+if [ -d Scopy.app/Contents/Frameworks/iio.framework/Tools ] && [ ! -L Scopy.app/Contents/Frameworks/iio.framework/Tools ]; then
+	rmdir Scopy.app/Contents/Frameworks/iio.framework/Tools
+fi
 cp -avR $STAGING_AREA_DEPS/lib/ad9361.framework Scopy.app/Contents/Frameworks/
 cp -avR $STAGING_AREA_DEPS/lib/genalyzer.framework Scopy.app/Contents/Frameworks/
 mkdir -p $BUILDDIR/Scopy.app/Contents/MacOS/plugins/resources
