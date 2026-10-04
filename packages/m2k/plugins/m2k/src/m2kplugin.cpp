@@ -25,7 +25,8 @@
 #include "digitalio.hpp"
 #include "dmm.hpp"
 #include "filter.hpp"
-#include "iioutil/connectionprovider.h"
+#include "m2kcontext.h"
+#include <component/attribute.h>
 #include "m2kcommon.h"
 #include "manualcalibration.h"
 #include "network_analyzer.hpp"
@@ -65,23 +66,11 @@ Q_LOGGING_CATEGORY(CAT_BENCHMARK, "Benchmark")
 bool M2kPlugin::compatible(QString m_param, QString category)
 {
 	qDebug(CAT_M2KPLUGIN) << "compatible";
-	bool ret = false;
-	ConnectionProvider *c = ConnectionProvider::GetInstance();
-	Connection *conn = c->open(m_param);
-
-	if(!conn)
+	if(category != "iio" && category != "m2k") {
 		return false;
-
-	//	ret = !!iio_context_find_device(ctx,"m2k-adc");
-	//	ret = ret && !!iio_context_find_device(ctx,"m2k-dac-a");
-	//	ret = ret && !!iio_context_find_device(ctx,"m2k-dac-b");
-
-	Filter *f = new Filter(conn->context());
-	ret = (f->hw_name().compare("M2K") == 0);
-	delete(f);
-
-	c->close(m_param);
-	return ret;
+	}
+	auto context = component::Controller::context(m_param);
+	return isM2kContext(context.get());
 }
 
 void M2kPlugin::preload()
@@ -146,18 +135,16 @@ bool M2kPlugin::loadPage()
 	lay->addWidget(textBrowser);
 
 	m_m2kInfoPage->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-	ConnectionProvider *c = ConnectionProvider::GetInstance();
-	Connection *conn = c->open(m_param);
-	for(int i = 0; i < iio_context_get_attrs_count(conn->context()); i++) {
-		const char *name;
-		const char *value;
-		int ret = iio_context_get_attr(conn->context(), i, &name, &value);
-		if(ret != 0)
-			continue;
-
-		m_m2kInfoPage->update(name, value);
+	auto context = component::Controller::context(m_param);
+	if(!context) {
+		return false;
 	}
-	c->close(m_param);
+	for(auto *attr : context->findChildren<component::Attribute *>(Qt::FindDirectChildrenOnly)) {
+		if(attr->readCapability()) {
+			QCoro::waitFor(attr->readCapability()->readAsync());
+		}
+		m_m2kInfoPage->update(attr->name(), attr->cachedValue());
+	}
 
 	return true;
 }
@@ -265,7 +252,7 @@ bool M2kPlugin::loadPreferencesPage()
 	m_preferencesPage = new QWidget();
 	QVBoxLayout *lay = new QVBoxLayout(m_preferencesPage);
 	lay->setSpacing(10);
-	lay->setMargin(0);
+	lay->setContentsMargins(0, 0, 0, 0);
 
 	// General preferences
 	MenuSectionWidget *generalWidget = new MenuSectionWidget(m_preferencesPage);
@@ -393,15 +380,7 @@ void M2kPlugin::loadSettings(QSettings &s)
 
 void M2kPlugin::cleanup()
 {
-	if(m2k_man) {
-		delete m2k_man;
-		m2k_man = nullptr;
-	}
-	if(m_calib) {
-		delete m_calib;
-		m_calib = nullptr;
-	}
-
+	m_m2kController->disconnectM2k();
 	restoreToolState(calibrationToolNames);
 
 	for(ToolMenuEntry *tme : qAsConst(m_toolList)) {
@@ -414,14 +393,17 @@ void M2kPlugin::cleanup()
 			delete tool;
 		}
 	}
+	tools.clear();
+	delete m2k_man;
+	m2k_man = nullptr;
+	delete m_calib;
+	m_calib = nullptr;
 
 	disconnect(m_m2kController, SIGNAL(calibrationStarted()), this, SLOT(calibrationStarted()));
 	disconnect(m_m2kController, SIGNAL(calibrationSuccess()), this, SLOT(calibrationSuccess()));
 	disconnect(m_m2kController, SIGNAL(calibrationFailed()), this, SLOT(calibrationFinished()));
 
-	m_m2kController->disconnectM2k();
 	m_btnCalibrate->setDisabled(true);
-	clearPingTask();
 
 	if(m_m2k) {
 		try {
@@ -432,39 +414,28 @@ void M2kPlugin::cleanup()
 		m_m2k = nullptr;
 	}
 
-	ConnectionProvider *c = ConnectionProvider::GetInstance();
-	c->close(m_param);
-}
-
-void M2kPlugin::clearPingTask()
-{
-	if(m_cyclicalTask) {
-		m_cyclicalTask->deleteLater();
-		m_cyclicalTask = nullptr;
-	}
-	if(m_pingTask) {
-		m_pingTask->deleteLater();
-		m_pingTask = nullptr;
-	}
+	m_context.reset();
 }
 
 bool M2kPlugin::onConnect()
 {
-	ConnectionProvider *c = ConnectionProvider::GetInstance();
-	Connection *conn = c->open(m_param);
-
-	if(!conn) {
+	m_context = component::Controller::context(m_param);
+	auto *ctx = nativeContext(m_context.get());
+	if(!ctx || !isM2kContext(m_context.get())) {
+		qWarning(CAT_M2KPLUGIN) << "M2K requires a device-controller libiio v0 context";
+		m_context.reset();
 		return false;
 	}
-	struct iio_context *ctx = conn->context();
 	try {
 		m_m2k = m2kOpen(ctx, m_param.toUtf8());
+		if(!m_m2k) {
+			cleanup();
+			return false;
+		}
 		m2k_man = new m2k_iio_manager();
 		m_btnCalibrate->setDisabled(false);
 
 		m_m2kController->connectM2k(m_m2k);
-		m_pingTask = new IIOPingTask(ctx, this);
-		m_cyclicalTask = new CyclicalTask(m_pingTask);
 
 		Filter *f = new Filter(ctx);
 		QJSEngine *js = ScopyJS::GetInstance()->engine();

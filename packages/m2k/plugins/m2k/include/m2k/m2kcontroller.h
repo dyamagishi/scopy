@@ -29,6 +29,7 @@
 #include "m2kreadtemperaturetask.h"
 
 #include <QObject>
+#include <component/controller.h>
 #include <QtConcurrent/QtConcurrent>
 
 #include <libm2k/contextbuilder.hpp>
@@ -67,6 +68,8 @@ private Q_SLOTS:
 	void onCalibFinished();
 
 private:
+	component::ContextHandle m_temperatureContext;
+	component::ContextHandle m_identifyContext;
 	M2kReadTemperatureTask *m_tempTask;
 	M2kIdentifyTask *m_identifyTask;
 	QString m_uri;

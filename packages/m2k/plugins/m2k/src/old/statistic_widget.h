@@ -35,6 +35,7 @@ class Formatter;
 
 class StatisticWidget : public QWidget
 {
+	Q_OBJECT
 public:
 	explicit StatisticWidget(QWidget *parent = nullptr);
 	~StatisticWidget();

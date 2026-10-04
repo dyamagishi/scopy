@@ -25,7 +25,7 @@
 
 #include <QDebug>
 
-#include <iioutil/connectionprovider.h>
+#include "m2kcontext.h"
 
 using namespace scopy::m2k;
 
@@ -42,10 +42,11 @@ void M2kReadTemperatureTask::run()
 	iio_channel *ch;
 	int ret;
 
-	Connection *conn = ConnectionProvider::GetInstance()->open(m_uri);
-	if(!conn)
+	auto context = scopy::component::Controller::context(m_uri);
+	auto *ctx = nativeContext(context.get());
+	if(!ctx)
 		goto finish;
-	dev = iio_context_find_device(conn->context(), "ad9963");
+	dev = iio_context_find_device(ctx, "ad9963");
 	if(!dev)
 		goto finish;
 	ch = iio_device_find_channel(dev, "temp0", false);
@@ -55,10 +56,10 @@ void M2kReadTemperatureTask::run()
 	ret = iio_channel_attr_read_double(ch, "raw", &val);
 	if(ret)
 		goto finish;
-	iio_channel_attr_read_double(ch, "scale", &scale);
+	ret = iio_channel_attr_read_double(ch, "scale", &scale);
 	if(ret)
 		goto finish;
-	iio_channel_attr_read_double(ch, "offset", &offset);
+	ret = iio_channel_attr_read_double(ch, "offset", &offset);
 	if(ret)
 		goto finish;
 
@@ -68,7 +69,5 @@ void M2kReadTemperatureTask::run()
 	Q_EMIT newTemperature(temperature);
 
 finish:
-	if(conn)
-		ConnectionProvider::GetInstance()->close(m_uri);
 	return;
 }

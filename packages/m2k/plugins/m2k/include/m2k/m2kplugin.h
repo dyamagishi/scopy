@@ -35,6 +35,7 @@
 #include <QPushButton>
 
 #include <calibration.hpp>
+#include <component/controller.h>
 #include <gui/infopage.h>
 #include <pluginbase/pluginbase.h>
 
@@ -78,6 +79,7 @@ public Q_SLOTS:
 	void updateTemperature(double);
 
 private:
+	component::ContextHandle m_context;
 	QTimer *m_infoPageTimer;
 
 	QPushButton *m_btnIdentify;
@@ -103,7 +105,6 @@ private:
 	void storeToolState(QStringList tools);
 	void restoreToolState(QStringList tools);
 	void cleanup();
-	void clearPingTask();
 };
 } // namespace m2k
 } // namespace scopy

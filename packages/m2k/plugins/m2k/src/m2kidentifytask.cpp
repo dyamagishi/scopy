@@ -21,7 +21,7 @@
 
 #include "m2kidentifytask.h"
 
-#include "iioutil/connectionprovider.h"
+#include "m2kcontext.h"
 
 #include <iio.h>
 
@@ -35,13 +35,14 @@ M2kIdentifyTask::~M2kIdentifyTask() {}
 
 void M2kIdentifyTask::run()
 {
-	Connection *conn = ConnectionProvider::GetInstance()->open(m_uri);
+	auto context = scopy::component::Controller::context(m_uri);
+	auto *ctx = nativeContext(context.get());
 	iio_device *dev;
 	iio_channel *ch;
 
-	if(!conn)
+	if(!ctx)
 		return;
-	dev = iio_context_find_device(conn->context(), "m2k-fabric");
+	dev = iio_context_find_device(ctx, "m2k-fabric");
 	if(!dev)
 		return;
 	ch = iio_device_find_channel(dev, "voltage4", true);
@@ -59,7 +60,5 @@ void M2kIdentifyTask::run()
 		QThread::msleep(100);
 	}
 
-finish:
-	ConnectionProvider::GetInstance()->close(m_uri);
 	return;
 }

@@ -78,7 +78,7 @@ if(${WITH_PYTHON})
 		message(STATUS "Using default Python EXECUTABLE")
 	endif()
 
-	if(CMAKE_SYSTEM_PROCESSOR MATCHES arm OR CMAKE_SYSTEM_PROCESSOR MATCHES aarch64)
+	if(CMAKE_CROSSCOMPILING)
 		find_package(Python3 REQUIRED COMPONENTS Development)
 	else()
 		find_package(Python3 REQUIRED COMPONENTS Interpreter Development)

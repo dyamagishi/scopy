@@ -48,12 +48,22 @@ M2kController::M2kController(QString uri, QObject *parent)
 	connect(m_calibFw, &QFutureWatcher<bool>::finished, this, &M2kController::onCalibFinished);
 }
 
-M2kController::~M2kController() {}
+M2kController::~M2kController()
+{
+	disconnectM2k();
+}
 
 void M2kController::startTemperatureTask()
 {
+	if(m_tempTimer) {
+		return;
+	}
+	m_temperatureContext = component::Controller::connectCtx(m_uri, component::BackendKind::Libiiov0, 1);
+	if(!m_temperatureContext) {
+		return;
+	}
 	m_tempTask = new M2kReadTemperatureTask(m_uri);
-	m_tempTimer = new CyclicalTask(m_tempTask);
+	m_tempTimer = new CyclicalTask(m_tempTask, this);
 	connect(m_tempTask, SIGNAL(newTemperature(double)), this, SIGNAL(newTemperature(double)));
 	m_tempTimer->start();
 }
@@ -63,9 +73,14 @@ void M2kController::stopTemperatureTask()
 	if(!m_tempTimer || !m_tempTask) {
 		return;
 	}
-	m_tempTimer->stop();
 	m_tempTask->requestInterruption();
+	m_tempTimer->stop();
+	m_tempTask->wait();
 	disconnect(m_tempTask, SIGNAL(newTemperature(double)), this, SIGNAL(newTemperature(double)));
+	delete m_tempTimer;
+	m_tempTimer = nullptr;
+	m_tempTask = nullptr;
+	m_temperatureContext.reset();
 }
 
 void M2kController::connectM2k(libm2k::context::M2k *m2k)
@@ -76,15 +91,15 @@ void M2kController::connectM2k(libm2k::context::M2k *m2k)
 
 void M2kController::disconnectM2k()
 {
-	if(!m_m2k) {
-		return;
-	}
+	stopTemperatureTask();
 	if(m_calibFw && m_calibFw->isRunning()) {
 		m_calibFw->waitForFinished();
 	}
 	if(m_identifyTask && m_identifyTask->isRunning()) {
 		m_identifyTask->requestInterruption();
+		m_identifyTask->wait();
 	}
+	m_identifyContext.reset();
 	m_m2k = nullptr;
 }
 
@@ -93,12 +108,20 @@ bool M2kController::isCalibrating() const { return m_calibFw && m_calibFw->isRun
 void M2kController::identify()
 {
 	if(!m_identifyTask) {
-		m_identifyTask = new M2kIdentifyTask(m_uri);
-		m_identifyTask->start();
-		connect(m_identifyTask, &QThread::finished, this, [=]() {
-			delete m_identifyTask;
-			m_identifyTask = nullptr;
+		m_identifyContext = component::Controller::connectCtx(m_uri, component::BackendKind::Libiiov0, 1);
+		if(!m_identifyContext) {
+			return;
+		}
+		m_identifyTask = new M2kIdentifyTask(m_uri, this);
+		auto *task = m_identifyTask;
+		connect(task, &QThread::finished, this, [this, task]() {
+			if(m_identifyTask == task) {
+				m_identifyTask = nullptr;
+				m_identifyContext.reset();
+			}
+			task->deleteLater();
 		});
+		task->start();
 	}
 }
 
@@ -117,7 +140,7 @@ void M2kController::initialCalibration()
 
 void M2kController::calibrate()
 {
-	if(m_calibFw->isRunning()) {
+	if(!m_m2k || m_calibFw->isRunning()) {
 		qWarning(CAT_M2KPLUGIN) << "Calibration already in progress!";
 		return;
 	}

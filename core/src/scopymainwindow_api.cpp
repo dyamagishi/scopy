@@ -57,42 +57,22 @@ void ScopyMainWindow_API::acceptLicense()
 
 QString ScopyMainWindow_API::addDevice(QString uri, QString cat, bool async)
 {
-	auto &&cp = ConnectionProvider::GetInstance();
-	Connection *conn = cp->open(uri);
-	QString devID = "";
-	if(conn) {
-		Q_ASSERT(m_w->dm != nullptr);
-		devID = m_w->dm->createDevice(cat, uri, async);
-	} else {
-		uri = "ip:" + uri;
-		conn = cp->open(uri);
-		if(conn) {
-			devID = m_w->dm->createDevice(cat, uri, async);
-		} else {
-			qWarning(CAT_SCOPY_API) << "No device available";
-		}
-	}
-	return devID;
+	return addDevice(uri, QList<QString>{}, cat, async);
 }
 
 QString ScopyMainWindow_API::addDevice(QString uri, QList<QString> plugins, QString cat, bool async)
 {
-	auto &&cp = ConnectionProvider::GetInstance();
-	Connection *conn = cp->open(uri);
-	QString devID = "";
-	if(conn) {
-		Q_ASSERT(m_w->dm != nullptr);
-		devID = m_w->dm->createDevice(cat, uri, async, plugins);
-	} else {
+	auto context = component::Controller::connectCtx(uri, component::BackendKind::Libiiov0, 1);
+	if(!context && !uri.contains(':')) {
 		uri = "ip:" + uri;
-		conn = cp->open(uri);
-		if(conn) {
-			devID = m_w->dm->createDevice(cat, uri, async, plugins);
-		} else {
-			qWarning(CAT_SCOPY_API) << "No device available";
-		}
+		context = component::Controller::connectCtx(uri, component::BackendKind::Libiiov0, 1);
 	}
-	return devID;
+	if(!context) {
+		qWarning(CAT_SCOPY_API) << "No device available";
+		return {};
+	}
+	Q_ASSERT(m_w->dm != nullptr);
+	return m_w->dm->createDevice(cat, uri, async, plugins);
 }
 
 Device *ScopyMainWindow_API::getDevice(int idx)
@@ -109,17 +89,15 @@ Device *ScopyMainWindow_API::getDevice(int idx)
 
 bool ScopyMainWindow_API::removeDevice(QString uri, QString cat)
 {
-	auto &&cp = ConnectionProvider::GetInstance();
-	Connection *conn = cp->open(uri);
 	Q_ASSERT(m_w->dm != nullptr);
-	bool devRemoved = false;
-	if(conn) {
-		m_w->dm->removeDevice(cat, uri);
-		devRemoved = true;
-	} else {
-		qWarning(CAT_SCOPY_API) << "No device found";
+	for(auto *device : m_w->dm->map) {
+		if(device->param() == uri && device->category() == cat) {
+			m_w->dm->removeDevice(cat, uri);
+			return true;
+		}
 	}
-	return devRemoved;
+	qWarning(CAT_SCOPY_API) << "No device found";
+	return false;
 }
 
 bool ScopyMainWindow_API::removeDevice(int idx)
@@ -444,15 +422,7 @@ QStringList ScopyMainWindow_API::getPlugins(int idx)
 
 QStringList ScopyMainWindow_API::getPlugins(QString uri, QString cat)
 {
-	QStringList pluginList;
-	auto &&cp = ConnectionProvider::GetInstance();
-	Connection *conn = cp->open(uri);
-	if(conn) {
-		pluginList = availablePlugins(uri, cat, nullptr);
-	} else {
-		qWarning(CAT_SCOPY_API) << "Device not found";
-	}
-	return pluginList;
+	return availablePlugins(uri, cat, nullptr);
 }
 
 QStringList ScopyMainWindow_API::availablePlugins(QString uri, QString cat, Device *dev)
@@ -461,6 +431,14 @@ QStringList ScopyMainWindow_API::availablePlugins(QString uri, QString cat, Devi
 	m_w->loadPluginsFromRepository();
 	QList<Plugin *> compatiblePlugins;
 	QStringList resultList;
+	// Idle devices release their controller context. Keep a temporary shared
+	// context while asking plugins to inspect the tree, just as DeviceFactory does.
+	const QString param = dev ? dev->param() : uri;
+	const QString category = dev ? dev->category() : cat;
+	component::ContextHandle context;
+	if(category == "iio") {
+		context = component::Controller::connectCtx(param, component::BackendKind::Libiiov0, 1);
+	}
 	if(!uri.isEmpty()) {
 		compatiblePlugins = pr->getCompatiblePlugins(uri, cat);
 	} else if(dev) {
@@ -469,6 +447,7 @@ QStringList ScopyMainWindow_API::availablePlugins(QString uri, QString cat, Devi
 
 	for(int i = 0; i < compatiblePlugins.size(); i++) {
 		resultList.append(compatiblePlugins[i]->name());
+		delete dynamic_cast<QObject *>(compatiblePlugins[i]);
 	}
 	return resultList;
 }

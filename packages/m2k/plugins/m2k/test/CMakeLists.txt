@@ -23,3 +23,4 @@ cmake_minimum_required(VERSION 3.16)
 include(ScopyTest)
 
 setup_scopy_tests(pluginloader)
+target_compile_definitions(scopy-m2k_test_pluginloader PRIVATE SCOPY_TEST_PLUGIN_FILE="$<TARGET_FILE:scopy-m2k>")

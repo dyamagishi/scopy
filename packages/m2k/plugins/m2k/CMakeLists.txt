@@ -65,7 +65,6 @@ file(
 file(GLOB HEADER_LIST include/${SCOPY_MODULE}/*.h include/${SCOPY_MODULE}/*.hpp)
 file(GLOB UI_LIST ui/*.ui ui/patterns/*.ui)
 
-set(ENABLE_TESTING ON)
 if(ENABLE_TESTING)
 	add_subdirectory(test)
 endif()
@@ -137,6 +136,7 @@ target_link_libraries(
 	       ${QWT_LIBRARIES}
 	       scopy-common
 	       scopy-pluginbase
+	       component
 	       scopy-iioutil
 	       scopy-gui
 	       scopy-m2k-gui

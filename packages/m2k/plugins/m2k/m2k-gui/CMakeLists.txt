@@ -70,7 +70,7 @@ else()
 
 	find_library(
 		QWT_LIBRARIES
-		NAMES qwt
+		NAMES qwt_scopy qwt
 		HINTS ${CMAKE_INSTALL_PREFIX}/lib
 		      /usr/lib
 		      /usr/lib64

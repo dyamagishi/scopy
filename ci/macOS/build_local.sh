@@ -4,7 +4,7 @@ set -euo pipefail
 
 if [[ ${1:-} == --help ]]; then
 	echo "Usage: bash ci/macOS/build_local.sh [--deps-only | --build-only]"
-	echo "Overrides: BUILDDIR, STAGING_AREA, QT, JOBS (number of parallel jobs)"
+	echo "Overrides: BUILDDIR, STAGING_AREA, QT, JOBS, ENABLE_M2K (ON/OFF)"
 	exit 0
 fi
 MODE=${1:-all}
@@ -28,6 +28,10 @@ export PATH="$STAGING_AREA/venv/bin:$BREW_PREFIX/bin:$QT_PATH:$PATH"
 export PKG_CONFIG_PATH="$STAGING_AREA_DEPS/lib/pkgconfig:$BREW_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 PREFIX_PATH="$QT;$STAGING_AREA_DEPS;$BREW_PREFIX"
 QT_CXX_FLAGS=
+ENABLE_M2K=${ENABLE_M2K:-OFF}
+[[ $ENABLE_M2K == ON || $ENABLE_M2K == OFF ]] || { echo "ENABLE_M2K must be ON or OFF" >&2; exit 1; }
+# shellcheck source=ci/macOS/m2k_deps.sh
+source "$REPO_SRC/ci/macOS/m2k_deps.sh"
 if [[ $ARCH == arm64 ]]; then
 	# Qt 6.8's qyieldcpu.h sees Clang 21's __yield builtin but lacks its declaration.
 	QT_CXX_FLAGS="-include arm_acle.h"
@@ -144,9 +148,19 @@ PY
 	install_cmake qcoro -DQCORO_BUILD_EXAMPLES=OFF -DQCORO_BUILD_TESTING=OFF \
 		-DBUILD_TESTING=OFF -DQCORO_WITH_QTWEBSOCKETS=OFF -DQCORO_WITH_QTQUICK=OFF \
 		-DQCORO_WITH_QML=OFF -DBUILD_SHARED_LIBS=ON
+	if [[ $ENABLE_M2K == ON ]]; then
+		build_m2k_dependencies
+	fi
 fi
 
 if [[ $MODE != --deps-only ]]; then
+	M2K_FLAGS=(-DENABLE_PACKAGE_M2K="$ENABLE_M2K" -DWITH_SIGROK="$ENABLE_M2K" -DWITH_PYTHON=OFF)
+	if [[ $ENABLE_M2K == ON ]]; then
+		M2K_FLAGS+=(-DBOOST_ROOT="$(brew --prefix boost@1.85)" -DWITH_PYTHON=ON \
+			-DPython3_ROOT_DIR="$(brew --prefix python@3.11)" \
+			-DPYTHON_EXECUTABLE="$STAGING_AREA/m2k-venv/bin/python3" \
+			-DPython3_EXECUTABLE="$STAGING_AREA/m2k-venv/bin/python3")
+	fi
 	cmake -S "$REPO_SRC" -B "$BUILDDIR" -G Ninja \
 		-DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
 		-DCMAKE_CXX_FLAGS="-I\"$STAGING_AREA/qt-include\"" \
@@ -156,7 +170,7 @@ if [[ $MODE != --deps-only ]]; then
 		-DCMAKE_BUILD_WITH_INSTALL_RPATH=OFF \
 		-DCMAKE_INSTALL_RPATH="$STAGING_AREA_DEPS/lib;$QT/lib;@executable_path/../Frameworks" \
 		-DENABLE_TESTING=ON -DENABLE_ALL_PACKAGES=ON -DENABLE_PLUGIN_ADC=OFF \
-		-DWITH_SIGROK=OFF -DWITH_PYTHON=OFF
+		"${M2K_FLAGS[@]}"
 	cmake --build "$BUILDDIR" --parallel "$JOBS"
 	file "$BUILDDIR/Scopy.app/Contents/MacOS/Scopy"
 	echo "Built: $BUILDDIR/Scopy.app (local dependencies must remain in place)"

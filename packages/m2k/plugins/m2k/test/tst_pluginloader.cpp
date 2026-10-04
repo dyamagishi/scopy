@@ -25,6 +25,9 @@
 #include <QTest>
 
 #include <pluginbase/plugin.h>
+#include <component/controller.h>
+#include <component/device.h>
+#include <m2k/m2kcontext.h>
 
 using namespace scopy;
 
@@ -43,10 +46,12 @@ private Q_SLOTS:
 	void name();
 	void metadata();
 	void unload();
+	void controllerCompatibility();
+	void unavailableControllerContext();
+	void nativeContextAbi();
 };
 
-#define PLUGIN_LOCATION "../.."
-#define FILENAME PLUGIN_LOCATION "/libscopy-m2k.so"
+#define FILENAME SCOPY_TEST_PLUGIN_FILE
 
 void TST_M2k::fileExists()
 {
@@ -102,6 +107,7 @@ void TST_M2k::clone()
 
 	Plugin *p1 = nullptr, *p2 = nullptr;
 	auto original = qobject_cast<Plugin *>(qp.instance());
+	QVERIFY(original != nullptr);
 	p1 = original->clone(this);
 	QVERIFY(p1 != nullptr);
 	p2 = original->clone(this);
@@ -115,6 +121,7 @@ void TST_M2k::name()
 
 	Plugin *p1 = nullptr, *p2 = nullptr;
 	auto original = qobject_cast<Plugin *>(qp.instance());
+	QVERIFY(original != nullptr);
 	p1 = original->clone(this);
 	qDebug() << p1->name();
 }
@@ -125,6 +132,7 @@ void TST_M2k::metadata()
 
 	Plugin *p1 = nullptr, *p2 = nullptr;
 	auto original = qobject_cast<Plugin *>(qp.instance());
+	QVERIFY(original != nullptr);
 	original->initMetadata();
 	p1 = original->clone(this);
 	qDebug() << p1->metadata();
@@ -138,6 +146,77 @@ void TST_M2k::unload()
 
 	//	qp.unload();
 	QVERIFY(!qp.isLoaded() == false);
+}
+
+void TST_M2k::controllerCompatibility()
+{
+	QPluginLoader loader(FILENAME, this);
+	auto *plugin = qobject_cast<Plugin *>(loader.instance());
+	QVERIFY(plugin);
+	const QString uri = "test:m2k-device-controller";
+	auto *tree = new component::Context();
+	auto owner = component::Controller::GetInstance()->adopt(uri, tree);
+	QVERIFY(owner);
+	QVERIFY(!plugin->compatible(uri, "iio"));
+	for(const auto &name : {"m2k-adc", "m2k-dac-a", "m2k-dac-b"}) {
+		auto *device = new component::Device(tree);
+		device->setName(name);
+	}
+	QVERIFY(plugin->compatible(uri, "iio"));
+	QVERIFY(plugin->compatible(uri, "m2k"));
+	QVERIFY(!plugin->compatible(uri, "other"));
+	// Compatibility borrows the existing tree; it neither opens USB nor removes it.
+	auto shared = component::Controller::context(uri);
+	QCOMPARE(shared.get(), tree);
+	owner.reset();
+	QVERIFY(plugin->compatible(uri, "iio"));
+	shared.reset();
+	QVERIFY(!component::Controller::context(uri));
+	QVERIFY(!plugin->compatible(uri, "iio"));
+}
+
+void TST_M2k::unavailableControllerContext()
+{
+	QPluginLoader loader(FILENAME, this);
+	auto *plugin = qobject_cast<Plugin *>(loader.instance());
+	QVERIFY(plugin);
+	const QString uri = "test:m2k-unavailable";
+	QVERIFY(!plugin->compatible(uri, "iio"));
+	plugin->setParam(uri, "iio");
+	QVERIFY(!plugin->onConnect());
+	// A backend-neutral identity tree is never cast to a native libiio pointer.
+	auto owner = component::Controller::GetInstance()->adopt(uri, new component::Context());
+	QVERIFY(owner);
+	QVERIFY(!plugin->onConnect());
+}
+
+void TST_M2k::nativeContextAbi()
+{
+	class Backend : public scopy::iio::IBackend
+	{
+	public:
+		scopy::iio::LibiioVersion abi = scopy::iio::LibiioVersion::V0;
+		scopy::iio::LibiioVersion version() const override { return abi; }
+		scopy::iio::IContextOps *contextOps() override { return nullptr; }
+		scopy::iio::IDeviceOps *deviceOps() override { return nullptr; }
+		scopy::iio::IChannelOps *channelOps() override { return nullptr; }
+		scopy::iio::IAttrOps *attrOps() override { return nullptr; }
+		scopy::iio::IBufferOps *bufferOps() override { return nullptr; }
+		scopy::iio::IScanOps *scanOps() override { return nullptr; }
+	} backend;
+	component::iio::IIOContext context;
+	int token = 0;
+	context.setHandle({&token});
+	QVERIFY(!m2k::nativeContext(nullptr));
+	QVERIFY(!m2k::nativeContext(&context));
+	context.setBackend(&backend);
+	const bool borrowed = m2k::nativeContext(&context) == reinterpret_cast<iio_context *>(&token);
+	backend.abi = scopy::iio::LibiioVersion::V1;
+	const bool rejected = m2k::nativeContext(&context) == nullptr;
+	// The fake token is not a real IIO context; never pass it to a destructor.
+	context.setHandle({});
+	QVERIFY(borrowed);
+	QVERIFY(rejected);
 }
 
 QTEST_MAIN(TST_M2k)
