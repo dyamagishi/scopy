@@ -8,6 +8,7 @@ env:
   USERNAME: github-actions
   CACHING_ENABLED: 'false'
   JOBS: '3'
+  ENABLE_PACKAGE_M2K: 'ON'
 
 permissions:
   contents: read
@@ -47,6 +48,7 @@ jobs:
             QT_QPA_PLATFORM: offscreen
           run: |
             ctest --test-dir build -E 'pluginloader|scopy-iioutil_test_connectionprovider' --output-on-failure --timeout 60
+            ctest --test-dir build -R '^scopy-m2k_test_pluginloader$' --no-tests=error --output-on-failure --timeout 60
 
         - name: Create Scopy.dmg
           run: bash ci/macOS/package_darwin.sh
@@ -58,6 +60,7 @@ jobs:
             env -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH -u QT_QPA_PLATFORM "$RUNNER_TEMP/Scopy.app/Contents/MacOS/Scopy" --accept-license --script="$GITHUB_WORKSPACE/ci/macOS/smoke.js" > build/package-smoke.log 2>&1
             grep -q 'Script finished with status 0' build/package-smoke.log
             grep -q 'Scopy finished gracefully' build/package-smoke.log
+            grep -q 'Found plugin: "M2kPlugin"' build/package-smoke.log
 
         - name: Set short git commit SHA
           run: echo "commit_sha=$(git rev-parse --short ${{ github.sha }})" >> "$GITHUB_ENV"

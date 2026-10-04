@@ -67,6 +67,27 @@ Building Scopy
     ``export QT="$HOME/Qt/6.8.3/macos"`` selects an existing Qt installation.
     See ``ci/macOS/README.md`` for CI and test details.
 
-    The current main-branch macOS configuration disables M2K instruments,
-    ADC, Python, and sigrok integration. A successful build does not establish
-    ADALM2000 measurement support.
+    ADC remains disabled in the macOS configuration.
+
+Building with ADALM2000 support
+------------------------------
+
+To include the M2K package, set the existing package option before running
+the same build steps:
+
+.. code-block:: zsh
+
+   % export ENABLE_PACKAGE_M2K=ON
+   % ./ci/macOS/install_macos_deps.sh
+   % ./ci/macOS/build_macos.sh
+   % ./ci/macOS/package_darwin.sh
+
+This adds GNU Radio, gr-scopy, gr-m2k, and libsigrokdecode dependencies.
+Scopy and libsigrokdecode both use Python 3.11; the packaged application
+includes that interpreter and the protocol decoders. M2K is disabled by
+default, so existing builds without GNU Radio remain available.
+
+M2K discovery and connection use device-controller's shared context.
+The DSP implementation still requires its borrowed libiio v0 handle;
+libiio v1 contexts are not supported by the M2K instruments.
+The CI startup test does not verify measurements, waveform output, or calibration.

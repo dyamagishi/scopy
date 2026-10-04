@@ -128,6 +128,16 @@ install_packages() {
 	fi
 	export PATH="$STAGING_AREA/venv/bin:$PATH"
 	python3 -m pip install mako 'aqtinstall==3.3.0'
+	if [ "$ENABLE_PACKAGE_M2K" = ON ]; then
+		for package in boost@1.85 volk glib python@3.11; do
+			brew list --versions "$package" >/dev/null 2>&1 || brew install "$package"
+		done
+		PYTHON_PREFIX=$(brew --prefix python@3.11)
+		if [ ! -x "$STAGING_AREA/m2k-venv/bin/python3" ]; then
+			"$PYTHON_PREFIX/bin/python3.11" -m venv "$STAGING_AREA/m2k-venv"
+		fi
+		"$STAGING_AREA/m2k-venv/bin/python3" -m pip install mako
+	fi
 }
 
 install_qt() {
@@ -157,6 +167,9 @@ export_paths(){
 	export PKG_CONFIG_PATH="$PKG_CONFIG_PATH:$BREW_PREFIX/opt/libzip/lib/pkgconfig"
 	export PKG_CONFIG_PATH="$PKG_CONFIG_PATH:$BREW_PREFIX/opt/libffi/lib/pkgconfig"
 	export PKG_CONFIG_PATH="$PKG_CONFIG_PATH:$STAGING_AREA_DEPS/lib/pkgconfig"
+	if [ "$ENABLE_PACKAGE_M2K" = ON ]; then
+		export PKG_CONFIG_PATH="$PYTHON_PREFIX/lib/pkgconfig:$BREW_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+	fi
 
 	# Refresh generated header aliases after Qt installation.
 	mkdir -p "$SCOPY_QT_INCLUDE_DIR"
@@ -217,8 +230,17 @@ clone() {
 	clone_repository https://github.com/KDE/karchive.git "$KARCHIVE_BRANCH" karchive
 	clone_repository https://github.com/analogdevicesinc/genalyzer.git "$GENALYZER_BRANCH" genalyzer
 	clone_repository https://github.com/qcoro/qcoro.git "$QCORO_BRANCH" qcoro
+	if [ "$ENABLE_PACKAGE_M2K" = ON ]; then
+		clone_repository https://github.com/analogdevicesinc/gnuradio.git "$GNURADIO_BRANCH" gnuradio
+		clone_repository https://github.com/analogdevicesinc/gr-scopy.git "$GR_SCOPY_BRANCH" gr-scopy
+		clone_repository https://github.com/analogdevicesinc/gr-m2k.git "$GR_M2K_BRANCH" gr-m2k
+		clone_repository https://github.com/sigrokproject/libsigrokdecode.git "$SIGROKDECODE_BRANCH" libsigrokdecode
+	fi
 
 	DEPENDENCY_REPOS="libserialport libiio libad9361 libad9166 libm2k qwt libtinyiiod KDDockWidgets extra-cmake-modules karchive genalyzer qcoro"
+	if [ "$ENABLE_PACKAGE_M2K" = ON ]; then
+		DEPENDENCY_REPOS="$DEPENDENCY_REPOS gnuradio gr-scopy gr-m2k libsigrokdecode"
+	fi
 	if [ "${CACHING_ENABLED}" == "true" ]; then
 		mkdir -p "$GIT_CACHE_DIR"
 		for repo in $DEPENDENCY_REPOS; do
@@ -487,6 +509,57 @@ build_qcoro() {
 	popd
 }
 
+build_gnuradio() {
+	pushd "$STAGING_AREA/gnuradio"
+	save_version_info
+	CURRENT_BUILD_CMAKE_OPTS="\
+		-DENABLE_DEFAULT=OFF -DENABLE_GNURADIO_RUNTIME=ON \
+		-DENABLE_GR_ANALOG=ON -DENABLE_GR_BLOCKS=ON -DENABLE_GR_FFT=ON \
+		-DENABLE_GR_FILTER=ON -DENABLE_GR_IIO=ON -DENABLE_POSTINSTALL=OFF \
+		-DENABLE_PYTHON=OFF -DENABLE_TESTING=OFF -DENABLE_GR_QTGUI=OFF \
+		-DCMAKE_DISABLE_FIND_PACKAGE_Qt5=ON -DBOOST_ROOT=$(brew --prefix boost@1.85) \
+		-DCMAKE_PREFIX_PATH=$STAGING_AREA_DEPS;$BREW_PREFIX \
+		-DPython3_EXECUTABLE=$STAGING_AREA/m2k-venv/bin/python3"
+	build_with_cmake
+	make install
+	popd
+}
+
+build_gr_scopy() {
+	pushd "$STAGING_AREA/gr-scopy"
+	save_version_info
+	CURRENT_BUILD_CMAKE_OPTS="-DWITH_PYTHON=OFF -DENABLE_DOXYGEN=OFF \
+		-DBOOST_ROOT=$(brew --prefix boost@1.85) \
+		-DBISON_EXECUTABLE=$BREW_PREFIX/opt/bison/bin/bison \
+		-DCMAKE_PREFIX_PATH=$STAGING_AREA_DEPS;$BREW_PREFIX"
+	build_with_cmake
+	make install
+	popd
+}
+
+build_gr_m2k() {
+	pushd "$STAGING_AREA/gr-m2k"
+	save_version_info
+	CURRENT_BUILD_CMAKE_OPTS="-DENABLE_PYTHON=OFF -DDIGITAL=OFF -DENABLE_DOXYGEN=OFF \
+		-DBOOST_ROOT=$(brew --prefix boost@1.85) \
+		-DCMAKE_PREFIX_PATH=$STAGING_AREA_DEPS;$BREW_PREFIX"
+	build_with_cmake
+	make install
+	popd
+}
+
+build_libsigrokdecode() {
+	pushd "$STAGING_AREA/libsigrokdecode"
+	save_version_info
+	[ -f configure ] || ./autogen.sh
+	mkdir -p build
+	cd build
+	PYTHON="$PYTHON_PREFIX/bin/python3.11" ../configure --prefix="$STAGING_AREA_DEPS"
+	make $JOBS
+	make install
+	popd
+}
+
 build_deps(){
 	if [ "${CACHING_ENABLED}" == "true" ] && [ "$DEPENDENCIES_CACHED" == "true" ]; then
 		echo "Found cached dependencies in $STAGING_AREA_DEPS"
@@ -506,6 +579,12 @@ build_deps(){
 	build_karchive
 	build_genalyzer
 	build_qcoro
+	if [ "$ENABLE_PACKAGE_M2K" = ON ]; then
+		build_gnuradio
+		build_gr_scopy
+		build_gr_m2k
+		build_libsigrokdecode
+	fi
 }
 
 # Setup cache management

@@ -68,18 +68,45 @@ fi
 
 if ls "$STAGING_AREA_DEPS/lib/libsigrokdecode"* 1>/dev/null 2>&1; then
 	echo "### Get python version"
-	brewprefix=$(brew --prefix python3)
-	pyversion=${brewprefix##*@} # extract the text after the last '@'
-	pythonpath=$brewprefix/Frameworks/Python.framework/Versions/$pyversion/Python
-	pythonidrpath="$(otool -D $pythonpath | head -2 | tail -1)"
+	# Bundle the interpreter actually linked by sigrok, not Homebrew's latest
+	# python3. Scopy and sigrok must use the same interpreter in one process.
+	sigrok_library=$(find "$STAGING_AREA_DEPS/lib" -name 'libsigrokdecode*.dylib' -type f | head -1)
+	pythonpath=$(otool -arch "$ARCH" -L "$sigrok_library" | awk '$1 ~ /Python.framework.*\/Python$/ {print $1; exit}')
+	[ -f "$pythonpath" ] || { echo "Cannot resolve sigrok's Python framework: $pythonpath" >&2; exit 1; }
+	pythonframework=${pythonpath%%/Python.framework/*}/Python.framework
+	pyversion=${pythonpath%/Python}
+	pyversion=${pyversion##*/}
+	pythonidrpath="$(otool -arch "$ARCH" -D "$pythonpath" | tail -1)"
 
 	if [ -z $pyversion ]; then
 		echo "No Python paths found"
 		exit 1
 	fi
 	echo " - Found python$pyversion at $pythonpath"
-	pythonid=${pythonidrpath#"$(brew --prefix python3)/Frameworks/"}
-	cp -R $(brew --prefix python3)/Frameworks/Python.framework Scopy.app/Contents/Frameworks/
+	pythonid=${pythonidrpath#*/Frameworks/}
+	ditto "$pythonframework" Scopy.app/Contents/Frameworks/Python.framework
+	# Homebrew omits the public framework symlinks required by codesign.
+	pythonbundle="$BUILDDIR/Scopy.app/Contents/Frameworks/Python.framework"
+	# Homebrew's site-packages symlink points outside the framework. Scopy needs
+	# the standard library and its separately bundled decoders, not global packages.
+	python_site="$pythonbundle/Versions/$pyversion/lib/python$pyversion/site-packages"
+	if [ -L "$python_site" ]; then
+		unlink "$python_site"
+		mkdir -p "$python_site"
+	fi
+	ln -sfn "$pyversion" "$pythonbundle/Versions/Current"
+	for entry in Python Resources Headers; do
+		ln -sfn "Versions/Current/$entry" "$pythonbundle/$entry"
+	done
+	# Relocate the embedded Python launchers too, not only Scopy/sigrok's link.
+	for executable in "$pythonbundle/Versions/$pyversion/bin/python$pyversion" \
+		"$pythonbundle/Versions/$pyversion/Resources/Python.app/Contents/MacOS/Python"; do
+		[ -f "$executable" ] || continue
+		linked_python=$(otool -arch "$ARCH" -L "$executable" | awk '$1 ~ /Python.framework.*\/Python$/ {print $1; exit}')
+		relative_python=$(python3 -c 'import os, sys; print(os.path.relpath(sys.argv[1], os.path.dirname(sys.argv[2])))' \
+			"$pythonbundle/Versions/$pyversion/Python" "$executable")
+		install_name_tool -change "$linked_python" "@loader_path/$relative_python" "$executable"
+	done
 fi
 
 echo "=== Copying libsigrokdecode protocol decoders"
@@ -227,8 +254,16 @@ while IFS= read -r -d '' binary; do
 done < <(find Scopy.app -type f ! -path '*.dSYM/*' -print0)
 
 echo "=== Ad-hoc code signing"
+# Python extension modules are stored as framework resources. --deep does not
+# re-sign them as nested code after macdeployqt changes their library paths.
+while IFS= read -r -d '' module; do
+	codesign --force --sign - "$module"
+done < <(find Scopy.app -name '*.so' -type f -print0)
 codesign --force --deep --sign - Scopy.app
 codesign --verify --deep --strict Scopy.app
+while IFS= read -r -d '' module; do
+	codesign --verify --strict "$module"
+done < <(find Scopy.app -name '*.so' -type f -print0)
 python3 "$REPO_SRC/ci/macOS/verify_bundle.py" Scopy.app "$ARCH"
 
 echo "=== Creating ScopyApp.zip"

@@ -209,10 +209,12 @@ if(NOT DEFINED ENABLE_PLUGIN_DEBUGGER)
 	set(ENABLE_PLUGIN_DEBUGGER OFF CACHE BOOL "Enable debugger plugin" FORCE)
 endif()
 
+# Keep the unmigrated M2K instruments opt-in even when ENABLE_ALL_PACKAGES is ON.
+option(ENABLE_PACKAGE_M2K "Enable the legacy ADALM2000 package" OFF)
+
 # gr-util hard-requires the gnuradio stack and is consumed only by the adc plugin. Skip it when that flag is explicitly
 # disabled so gnuradio can be dropped. (add_subdirectory(packages) synthesizes the flag later, but the default above -
 # or a value passed on the command line - already puts it in the cache by this point.)
-option(ENABLE_PACKAGE_M2K "Enable the legacy ADALM2000 package" OFF)
 if(DEFINED ENABLE_PLUGIN_ADC AND NOT ENABLE_PLUGIN_ADC)
 	message(STATUS "Skipping gr-util (ADC plugin disabled)")
 else()

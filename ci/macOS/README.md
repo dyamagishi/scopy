@@ -65,7 +65,7 @@ See [macOS Build Instructions](../../docs/user_guide/build_instructions/macosBui
 
 - **GitHub Actions**: `.github/workflows/macosbuild.yml`, native ARM64 and Intel runners.
 - The same scripts are used locally and in CI. CI builds with `ENABLE_TESTING=ON`, runs hardware-free tests, checks dependency paths and signing, and starts a relocated packaged application.
-- Tests matching `pluginloader` are excluded because they assume Linux `.so` names. `scopy-iioutil_test_connectionprovider` requires `ip:192.168.2.1` and is also excluded.
+- Most tests matching `pluginloader` are excluded because they assume Linux `.so` names. The M2K plugin-loader/controller tests use the built target's path and run separately in the M2K matrix. `scopy-iioutil_test_connectionprovider` requires `ip:192.168.2.1` and is also excluded.
 - Existing Homebrew, Git, and built-dependency caches use `CACHING_ENABLED`, `HOMEBREW_PACKAGES_CACHE`, `GIT_REPOS_CACHE`, `BUILT_DEPS_CACHE`, and `PIPELINE_WORKSPACE`. Cache cleanup is restricted to that explicitly configured cache workspace.
 
 ## Notes
@@ -74,4 +74,5 @@ See [macOS Build Instructions](../../docs/user_guide/build_instructions/macosBui
 - Configuration is in `macos_config.sh`. Path overrides must be used consistently for all steps. `JOBS` accepts `-j8` or `8`.
 - Repeated builds do not reset dependency checkouts or delete build directories. Use a new staging directory when changing dependency refs or architectures.
 - Ad-hoc signing is not Developer ID signing or notarization.
-- M2K instruments, ADC, Python, and sigrok integration remain disabled in the main-branch macOS build configuration; hardware operation is not covered by the CI startup test.
+- Set `ENABLE_PACKAGE_M2K=ON` consistently for dependency installation, application build, and packaging to include ADALM2000 instruments. This adds GNU Radio and sigrok; Scopy and sigrok use the same Python 3.11 interpreter. Default builds keep M2K/Python/sigrok disabled. ADC remains disabled.
+- The M2K branch's ARM64/Intel Actions matrix builds this optional configuration. Hardware operation is not covered by the CI startup test; `js/testAutomations/m2k/controllerRecognition.js` checks recognition without connecting to hardware or enabling outputs.

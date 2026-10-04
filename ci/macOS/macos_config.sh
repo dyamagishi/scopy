@@ -6,6 +6,8 @@ REPO_SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 STAGING_AREA=${STAGING_AREA:-$PWD/staging}
 STAGING_AREA_DEPS=${STAGING_AREA_DEPS:-$STAGING_AREA/dependencies}
 BUILDDIR=${BUILDDIR:-$REPO_SRC/build}
+ENABLE_PACKAGE_M2K=${ENABLE_PACKAGE_M2K:-OFF}
+case "$ENABLE_PACKAGE_M2K" in ON|OFF) ;; *) echo "ENABLE_PACKAGE_M2K must be ON or OFF" >&2; return 1 ;; esac
 JOBS=${JOBS:--j8}
 # Preserve make-style values; accept numeric overrides used by CI as well.
 [[ $JOBS == -j* ]] || JOBS="-j$JOBS"
@@ -38,3 +40,7 @@ ECM_BRANCH=v6.8.0
 KARCHIVE_BRANCH=v6.8.0
 GENALYZER_BRANCH=main
 QCORO_BRANCH=v0.13.0
+GNURADIO_BRANCH=scopy2-maint-3.10
+GR_SCOPY_BRANCH=3.10
+GR_M2K_BRANCH=main
+SIGROKDECODE_BRANCH=master

@@ -97,6 +97,7 @@ else()
 endif()
 
 if(SCOPY_ENABLE_GR_GUI)
+	find_package(Volk REQUIRED)
 	add_subdirectory(gr-gui)
 	set(SCOPY_HAVE_GR_GUI ON)
 endif()
@@ -145,6 +146,10 @@ target_link_libraries(
 	       scopy-pluginbase
 	       scopy-gui
 )
+
+if(SCOPY_ENABLE_GR_GUI)
+	target_link_libraries(${PROJECT_NAME} PUBLIC Volk::volk)
+endif()
 
 install(TARGETS ${PROJECT_NAME} LIBRARY DESTINATION ${SCOPY_DLL_INSTALL_PATH}
 	RUNTIME DESTINATION ${SCOPY_DLL_INSTALL_PATH}

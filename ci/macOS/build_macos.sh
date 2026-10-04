@@ -43,6 +43,14 @@ build_iio-emu(){
 
 build_scopy(){
 	echo "### Building Scopy"
+	local m2k_options=(-DENABLE_PACKAGE_M2K="$ENABLE_PACKAGE_M2K" -DWITH_SIGROK="$ENABLE_PACKAGE_M2K" -DWITH_PYTHON=OFF)
+	if [ "$ENABLE_PACKAGE_M2K" = ON ]; then
+		m2k_options+=(-DWITH_PYTHON=ON -DBOOST_ROOT="$(brew --prefix boost@1.85)"
+			-DCMAKE_PREFIX_PATH="${QT};${STAGING_AREA_DEPS};$(brew --prefix)"
+			-DPython3_ROOT_DIR="$(brew --prefix python@3.11)"
+			-DPYTHON_EXECUTABLE="$STAGING_AREA/m2k-venv/bin/python3"
+			-DPython3_EXECUTABLE="$STAGING_AREA/m2k-venv/bin/python3")
+	fi
 	pushd "$REPO_SRC"
 	mkdir -p "$BUILDDIR"
 	cd "$BUILDDIR"
@@ -64,10 +72,8 @@ build_scopy(){
 		-DSCOPY_MACOS_QT_VERSION="$QT_VERSION" \
 		-DENABLE_TESTING="${ENABLE_TESTING:-OFF}" \
 		-DENABLE_ALL_PACKAGES=ON \
-		-DENABLE_PACKAGE_M2K=OFF \
 		-DENABLE_PLUGIN_ADC=OFF \
-		-DWITH_SIGROK=OFF \
-		-DWITH_PYTHON=OFF \
+		"${m2k_options[@]}" \
 		"$REPO_SRC"
 	CFLAGS=-I${STAGING_AREA_DEPS}/include LDFLAGS=-L${STAGING_AREA_DEPS}/lib make ${JOBS}
 	otool -l ./Scopy.app/Contents/MacOS/Scopy
