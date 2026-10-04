@@ -1,19 +1,27 @@
 #!/bin/bash
+# Shared variables are consumed by the scripts that source this file.
+# shellcheck disable=SC2034
 
-STAGING_AREA=$PWD/staging
-STAGING_AREA_DEPS=$STAGING_AREA/dependencies
-REPO_SRC=$(git rev-parse --show-toplevel)
-BUILDDIR=$REPO_SRC/build
-JOBS=-j8
+REPO_SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+STAGING_AREA=${STAGING_AREA:-$REPO_SRC/staging}
+STAGING_AREA_DEPS=${STAGING_AREA_DEPS:-$STAGING_AREA/dependencies}
+BUILDDIR=${BUILDDIR:-$REPO_SRC/build}
+JOBS=${JOBS:-8}
+# Accept the former make-style value as well as a numeric parallelism limit.
+JOBS=${JOBS#-j}
+[[ $JOBS =~ ^[1-9][0-9]*$ ]] || { echo "JOBS must be a positive integer" >&2; return 1; }
+ARCH=${ARCH:-$(uname -m)}
+case "$ARCH" in arm64|x86_64) ;; *) echo "Unsupported architecture: $ARCH" >&2; return 1 ;; esac
+export MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-11.0}
 
 # Qt6 via aqtinstall (clang_64 universal binary)
-QT_INSTALL_LOCATION=$HOME/Qt
-QT=$QT_INSTALL_LOCATION/6.8.3/macos
+QT_INSTALL_LOCATION=${QT_INSTALL_LOCATION:-$HOME/Qt}
+QT_VERSION=${QT_VERSION:-6.8.3}
+QT=${QT:-$QT_INSTALL_LOCATION/$QT_VERSION/macos}
 QT_PATH=$QT/bin
 QMAKE_BIN=$QT_PATH/qmake6
 
 export PATH="${QT_PATH}:$PATH"
-export LD_LIBRARY_PATH="$LD_LIBRARY_PATH;$STAGING_AREA_DEPS;$STAGING_AREA_DEPS/lib"
 
 LIBSERIALPORT_BRANCH=master
 LIBIIO_VERSION=v0.26

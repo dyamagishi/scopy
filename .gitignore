@@ -88,6 +88,7 @@ compile_commands.json
 .venv/*
 artifacts/*
 build-*
+/staging/
 
 # Local planning notes (see CLAUDE.md's tasks/todo.md convention) - never part of a release.
 tasks/

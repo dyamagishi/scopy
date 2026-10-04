@@ -1,64 +1,31 @@
-# macOS CI Directory
+# macOS build and packaging
 
-## Overview
+CI and developers use the same scripts on native Apple Silicon (`arm64`) and
+Intel (`x86_64`) machines. Use a native terminal, not Rosetta.
 
-This directory contains scripts for building Scopy on macOS. The build process uses Homebrew for dependency management and creates a DMG installer for distribution.
+From the repository root:
 
-### Scripts
+```sh
+bash ci/macOS/install_macos_deps.sh
+ENABLE_TESTING=ON bash ci/macOS/build_macos.sh
+QT_QPA_PLATFORM=offscreen ctest --test-dir build \
+  -E 'pluginloader|scopy-iioutil_test_connectionprovider' --output-on-failure --timeout 60
+bash ci/macOS/package_darwin.sh
+open build/package/Scopy.app
+```
 
-#### `macos_config.sh`- Configuration file for macOS builds
+See the [macOS build guide](../../docs/user_guide/build_instructions/macosBuild.rst)
+for prerequisites, configuration, output locations, and test limitations.
 
-#### `build_azure_macos.sh`- Main build script for Azure Pipelines
+- `macos_config.sh`: architecture, paths, Qt version, dependency refs.
+- `macos_common.sh`: shared environment and build helpers.
+- `install_macos_deps.sh`: incremental dependencies and Qt installation.
+- `build_macos.sh`: incremental Scopy and IIO-Emulator build.
+- `package_darwin.sh`: standalone, ad-hoc-signed app, ZIP, and DMG.
+- `verify_bundle.py`: checks binary architectures and bundled dependency closure.
 
-#### `install_macos_deps.sh`- Installs macOS build dependencies
-
-#### `before_install_lib.sh`- Pre-installation setup for libraries (not used anymore)
-
-#### `package_darwin.sh`- Creates the macOS DMG installer
-
-## Build Process
-
-### Prerequisites
-
-- **Homebrew**: Package manager for macOS. Can be installed from here, [Homebrew Installation](https://docs.brew.sh/Installation).
-
-### Build Steps
-
-1. **Setup the environment and install the dependencies**:
-
-   ```bash
-      ./install_macos_deps.sh
-   ```
-
-   This will install packages using brew, so you will have to make sure that you have brew installed on the machine. The rest of the dependencies that can’t be found on brew will be built from the source files.
-
-2. **Build Scopy**:
-
-   ```bash
-      ./build_azure_macos.sh
-   ```
-
-3. **Create Installer**:
-
-   ```bash
-      ./package_darwin.sh
-   ```
-
-   To run the application, the final step is linking the dependencies to the Scopy binary, enabling the operating system to locate them at runtime.
-
-   This process is handled by a script that manages both the linking and packaging. Once the script completes, inside the build folder, it generates a file named Scopy.app, which can be opened either by running “open Scopy.app” in the terminal or by double-clicking it in the file explorer.
-
-## Output
-
-- **Scopy.app**: macOS application bundle
-- **Scopy.dmg**: Distributable disk image installer
-
-## CI Integration
-
-- Built on Azure: See `azure-pipelines.yml` in repository root
-
-## Notes
-
-- Only x86_64 architecture is currently supported
-- Apple Silicon (M1/M2) support is provided by [Rosetta](https://support.apple.com/en-us/102527)
-- All dependencies must be built with same architecture
+`.github/workflows/macosbuild.yml` uses these same entry points for ARM64 and
+Intel. It tests the build and audits/starts a relocated packaged application.
+The scripts do not reset checkouts, delete existing builds, uninstall Homebrew
+packages, or install Python packages globally. CI caches may cache the staging
+directory, but there is no separate cache-only build implementation.
