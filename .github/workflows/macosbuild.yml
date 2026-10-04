@@ -7,12 +7,16 @@ on:
 env:
   USERNAME: github-actions
   CACHING_ENABLED: 'false'
+  JOBS: '3'
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ${{ matrix.runner }}
     name: ${{ matrix.name }}
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     strategy:
       fail-fast: false
@@ -21,7 +25,7 @@ jobs:
           - runner: macos-15
             name: macOS 15 Qt6 (ARM64)
             artifact: Scopy-macOS15-arm64-qt6
-          - runner: macos-15-large
+          - runner: macos-15-intel
             name: macOS 15 Qt6 (Intel)
             artifact: Scopy-macOS15-x86_64-qt6
 
