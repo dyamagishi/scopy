@@ -11,23 +11,20 @@
 set -ex
 REPO_SRC=$(git rev-parse --show-toplevel)
 # Load macOS Qt6-specific configuration
-source $REPO_SRC/ci/macOS/macos_config.sh
+source "$REPO_SRC/ci/macOS/macos_config.sh"
 
 # Build IIO Emulator
 # =================
 # Virtual IIO device for testing without hardware
 build_iio-emu(){
 	echo "### Clone and Build IIO-Emulator"
-	pushd $REPO_SRC
-	# Clone if not present
+	pushd "$REPO_SRC"
 	if [ ! -d "$REPO_SRC/iio-emu" ]; then
-		git clone https://github.com/analogdevicesinc/iio-emu $REPO_SRC/iio-emu
+		git clone https://github.com/analogdevicesinc/iio-emu "$REPO_SRC/iio-emu"
 	fi
-	mkdir -p $REPO_SRC/iio-emu/build
-	cd $REPO_SRC/iio-emu/build
+	mkdir -p "$REPO_SRC/iio-emu/build"
+	cd "$REPO_SRC/iio-emu/build"
 
-	# Configure with CMake
-	# macOS needs explicit library and include paths
 	cmake \
 		-DCMAKE_LIBRARY_PATH="$STAGING_AREA_DEPS" \
 		-DCMAKE_INSTALL_PREFIX="$STAGING_AREA_DEPS" \
@@ -37,21 +34,18 @@ build_iio-emu(){
 		-DCMAKE_STAGING_PREFIX="$STAGING_AREA_DEPS" \
 		-DCMAKE_EXE_LINKER_FLAGS="-L${STAGING_AREA_DEPS}/lib" \
 		-DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+		-DCMAKE_OSX_ARCHITECTURES="$ARCH" \
+		-DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
 		../
-
-	# Build with explicit paths for macOS
 	CFLAGS=-I${STAGING_AREA_DEPS}/include LDFLAGS=-L${STAGING_AREA_DEPS}/lib make ${JOBS}
 	popd
 }
 
 build_scopy(){
 	echo "### Building Scopy"
-	ls -la $REPO_SRC
-	pushd $REPO_SRC
-
-	rm -rf $REPO_SRC/build
-	mkdir -p $REPO_SRC/build
-	cd $REPO_SRC/build
+	pushd "$REPO_SRC"
+	mkdir -p "$BUILDDIR"
+	cd "$BUILDDIR"
 	cmake \
 		-DCMAKE_LIBRARY_PATH="$STAGING_AREA_DEPS" \
 		-DCMAKE_INSTALL_PREFIX="$STAGING_AREA/scopy-install" \
@@ -61,15 +55,20 @@ build_scopy(){
 		-DCMAKE_STAGING_PREFIX="$STAGING_AREA_DEPS" \
 		-DCMAKE_EXE_LINKER_FLAGS="-L${STAGING_AREA_DEPS}/lib" \
 		-DCMAKE_MACOSX_RPATH=ON \
-		-DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+		-DCMAKE_BUILD_WITH_INSTALL_RPATH=OFF \
+		-DCMAKE_BUILD_RPATH="${STAGING_AREA_DEPS}/lib;${QT}/lib" \
 		-DCMAKE_INSTALL_RPATH="${STAGING_AREA_DEPS}/lib;${QT}/lib;@executable_path/../Frameworks" \
-		-DENABLE_TESTING=OFF \
+		-DCMAKE_OSX_ARCHITECTURES="$ARCH" \
+		-DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
+		-DSCOPY_QT_INCLUDE_DIR="$SCOPY_QT_INCLUDE_DIR" \
+		-DSCOPY_MACOS_QT_VERSION="$QT_VERSION" \
+		-DENABLE_TESTING="${ENABLE_TESTING:-OFF}" \
 		-DENABLE_ALL_PACKAGES=ON \
 		-DENABLE_PACKAGE_M2K=OFF \
 		-DENABLE_PLUGIN_ADC=OFF \
 		-DWITH_SIGROK=OFF \
 		-DWITH_PYTHON=OFF \
-		../
+		"$REPO_SRC"
 	CFLAGS=-I${STAGING_AREA_DEPS}/include LDFLAGS=-L${STAGING_AREA_DEPS}/lib make ${JOBS}
 	otool -l ./Scopy.app/Contents/MacOS/Scopy
 	otool -L ./Scopy.app/Contents/MacOS/Scopy

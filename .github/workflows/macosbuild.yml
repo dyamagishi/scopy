@@ -2,16 +2,21 @@ name: macOS Qt6 Scopy Build
 
 on:
     workflow_call:
+    workflow_dispatch:
 
 env:
   USERNAME: github-actions
   CACHING_ENABLED: 'false'
+  JOBS: '3'
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ${{ matrix.runner }}
     name: ${{ matrix.name }}
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     strategy:
       fail-fast: false
@@ -20,7 +25,7 @@ jobs:
           - runner: macos-15
             name: macOS 15 Qt6 (ARM64)
             artifact: Scopy-macOS15-arm64-qt6
-          - runner: macos-15-large
+          - runner: macos-15-intel
             name: macOS 15 Qt6 (Intel)
             artifact: Scopy-macOS15-x86_64-qt6
 
@@ -31,16 +36,28 @@ jobs:
 
         - name: Build and Install Dependencies
           run: |
-            chmod +x ci/macOS/macos_config.sh ci/macOS/install_macos_deps.sh ci/macOS/build_macos.sh ci/macOS/package_darwin.sh
-            ./ci/macOS/install_macos_deps.sh
+            bash ci/macOS/install_macos_deps.sh
 
         - name: Build Scopy
           run: |
-            export MACOSX_DEPLOYMENT_TARGET=11.0
-            ./ci/macOS/build_macos.sh
+            ENABLE_TESTING=ON bash ci/macOS/build_macos.sh
+
+        - name: Run hardware-free tests
+          env:
+            QT_QPA_PLATFORM: offscreen
+          run: |
+            ctest --test-dir build -E 'pluginloader|scopy-iioutil_test_connectionprovider' --output-on-failure --timeout 60
 
         - name: Create Scopy.dmg
-          run: ./ci/macOS/package_darwin.sh
+          run: bash ci/macOS/package_darwin.sh
+
+        - name: Verify relocated standalone app
+          run: |
+            ditto build/Scopy.app "$RUNNER_TEMP/Scopy.app"
+            python3 ci/macOS/verify_bundle.py "$RUNNER_TEMP/Scopy.app" "$(uname -m)"
+            env -u DYLD_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH -u QT_QPA_PLATFORM "$RUNNER_TEMP/Scopy.app/Contents/MacOS/Scopy" --accept-license --script="$GITHUB_WORKSPACE/ci/macOS/smoke.js" > build/package-smoke.log 2>&1
+            grep -q 'Script finished with status 0' build/package-smoke.log
+            grep -q 'Scopy finished gracefully' build/package-smoke.log
 
         - name: Set short git commit SHA
           run: echo "commit_sha=$(git rev-parse --short ${{ github.sha }})" >> "$GITHUB_ENV"
@@ -52,3 +69,4 @@ jobs:
             path: |
               build/Scopy.dmg
               build/ScopyApp.zip
+              build/package-smoke.log

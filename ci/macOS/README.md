@@ -8,57 +8,70 @@ This directory contains scripts for building Scopy on macOS. The build process u
 
 #### `macos_config.sh`- Configuration file for macOS builds
 
-#### `build_azure_macos.sh`- Main build script for Azure Pipelines
+#### `build_macos.sh`- Builds Scopy and IIO-Emulator
 
 #### `install_macos_deps.sh`- Installs macOS build dependencies
 
-#### `before_install_lib.sh`- Pre-installation setup for libraries (not used anymore)
-
 #### `package_darwin.sh`- Creates the macOS DMG installer
+
+#### `verify_bundle.py`- Checks architectures and dependency paths without modifying the bundle
+
+#### `smoke.js`- Starts and exits Scopy without connecting to hardware
 
 ## Build Process
 
 ### Prerequisites
 
-- **Homebrew**: Package manager for macOS. Can be installed from here, [Homebrew Installation](https://docs.brew.sh/Installation).
+- **Homebrew**: See [Homebrew Installation](https://docs.brew.sh/Installation).
+- Xcode or the Xcode Command Line Tools, Git, and Python 3.9 or later.
+- A native Intel or Apple Silicon terminal.
 
 ### Build Steps
+
+Run from the repository root:
 
 1. **Setup the environment and install the dependencies**:
 
    ```bash
-      ./install_macos_deps.sh
+   ./ci/macOS/install_macos_deps.sh
    ```
 
-   This will install packages using brew, so you will have to make sure that you have brew installed on the machine. The rest of the dependencies that can’t be found on brew will be built from the source files.
+   This installs required Homebrew packages and builds other dependencies from source. Qt and Python build tools are installed using a staging-directory virtual environment.
 
 2. **Build Scopy**:
 
    ```bash
-      ./build_azure_macos.sh
+   ./ci/macOS/build_macos.sh
    ```
 
 3. **Create Installer**:
 
    ```bash
-      ./package_darwin.sh
+   ./ci/macOS/package_darwin.sh
    ```
 
-   To run the application, the final step is linking the dependencies to the Scopy binary, enabling the operating system to locate them at runtime.
+   Packaging links and bundles dependencies in `build/Scopy.app`. Open it using `open build/Scopy.app` or Finder. Packaging modifies the build bundle; rebuild before packaging again.
 
-   This process is handled by a script that manages both the linking and packaging. Once the script completes, inside the build folder, it generates a file named Scopy.app, which can be opened either by running “open Scopy.app” in the terminal or by double-clicking it in the file explorer.
+See [macOS Build Instructions](../../docs/user_guide/build_instructions/macosBuild.rst) for the user-facing build instructions.
 
 ## Output
 
 - **Scopy.app**: macOS application bundle
 - **Scopy.dmg**: Distributable disk image installer
+- **ScopyApp.zip**: Zipped application bundle
+- **build-status**: Dependency versions included in the application About page
 
 ## CI Integration
 
-- Built on Azure: See `azure-pipelines.yml` in repository root
+- **GitHub Actions**: `.github/workflows/macosbuild.yml`, native ARM64 and Intel runners.
+- The same scripts are used locally and in CI. CI builds with `ENABLE_TESTING=ON`, runs hardware-free tests, checks dependency paths and signing, and starts a relocated packaged application.
+- Tests matching `pluginloader` are excluded because they assume Linux `.so` names. `scopy-iioutil_test_connectionprovider` requires `ip:192.168.2.1` and is also excluded.
+- Existing Homebrew, Git, and built-dependency caches use `CACHING_ENABLED`, `HOMEBREW_PACKAGES_CACHE`, `GIT_REPOS_CACHE`, `BUILT_DEPS_CACHE`, and `PIPELINE_WORKSPACE`. Cache cleanup is restricted to that explicitly configured cache workspace.
 
 ## Notes
 
-- Only x86_64 architecture is currently supported
-- Apple Silicon (M1/M2) support is provided by [Rosetta](https://support.apple.com/en-us/102527)
-- All dependencies must be built with same architecture
+- Native x86_64 and arm64 builds are supported; all dependencies must use the same architecture.
+- Configuration is in `macos_config.sh`. Path overrides must be used consistently for all steps. `JOBS` accepts `-j8` or `8`.
+- Repeated builds do not reset dependency checkouts or delete build directories. Use a new staging directory when changing dependency refs or architectures.
+- Ad-hoc signing is not Developer ID signing or notarization.
+- M2K instruments, ADC, Python, and sigrok integration remain disabled in the main-branch macOS build configuration; hardware operation is not covered by the CI startup test.

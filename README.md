@@ -17,8 +17,6 @@ Scopy is a software oscilloscope and signal analysis toolset.
 
 Complete installation and usage instructions can be found on our [official documentation](https://analogdevicesinc.github.io/scopy/) page.
 
-For a native Apple Silicon or Intel development build, see the [local macOS build guide](docs/build-macos-local.md).
-
 ## Contributing
 
 See the [CONTRIBUTING file](CONTRIBUTING.md) for guidance on contributing to this project.
