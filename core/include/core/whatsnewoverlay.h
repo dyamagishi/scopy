@@ -28,6 +28,7 @@
 #include "scopy-core_export.h"
 #include <QButtonGroup>
 #include <QComboBox>
+#include <QPointer>
 #include <QStackedWidget>
 
 namespace scopy {
@@ -49,7 +50,7 @@ private:
 
 	QStackedWidget *m_carouselWidget;
 	QComboBox *m_versionCb;
-	gui::TintedOverlay *m_tintedOverlay;
+	QPointer<gui::TintedOverlay> m_tintedOverlay;
 };
 } // namespace scopy
 #endif // WHATSNEWOVERLAY_H
