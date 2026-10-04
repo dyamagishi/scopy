@@ -51,6 +51,8 @@ endif()
 set(EXTRA_BUNDLE_FILES ${ICON_FILE} ${PKGINFO} ${QT_CONF})
 
 function(setup_macos_bundle_resources target)
+	# qt_add_executable does not consume EXTRA_BUNDLE_FILES like the Qt5 path did.
+	target_sources(${target} PRIVATE ${EXTRA_BUNDLE_FILES})
 	add_custom_command(
 		TARGET ${target}
 		POST_BUILD
@@ -69,11 +71,13 @@ function(setup_macos_bundle_resources target)
 		)
 	endif()
 
-	add_custom_command(
-		TARGET ${target}
-		POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/translations
-			$<TARGET_BUNDLE_DIR:${target}>/Contents/Resources/translations
-		COMMENT "Copying translations into app bundle"
-	)
+	if(ENABLE_TRANSLATION)
+		add_custom_command(
+			TARGET ${target}
+			POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/translations
+				$<TARGET_BUNDLE_DIR:${target}>/Contents/Resources/translations
+			COMMENT "Copying translations into app bundle"
+		)
+	endif()
 endfunction()

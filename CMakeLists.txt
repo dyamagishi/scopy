@@ -62,6 +62,10 @@ add_compile_definitions(QT_MESSAGELOGCONTEXT)
 
 include(GNUInstallDirs)
 
+if(APPLE)
+	include(ScopyMacOSQtCompat)
+endif()
+
 find_package(QT NAMES Qt6 REQUIRED COMPONENTS Widgets)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets LinguistTools)
 find_package(KDDockWidgets-qt6 QUIET)

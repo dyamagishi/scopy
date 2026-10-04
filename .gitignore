@@ -88,6 +88,8 @@ compile_commands.json
 .venv/*
 artifacts/*
 build-*
+!ci/macOS/build_local.sh
+!docs/build-macos-local.md
 
 # Local planning notes (see CLAUDE.md's tasks/todo.md convention) - never part of a release.
 tasks/
