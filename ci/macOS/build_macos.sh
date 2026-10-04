@@ -45,6 +45,9 @@ build_scopy(){
 	echo "### Building Scopy"
 	local m2k_options=(-DENABLE_PACKAGE_M2K="$ENABLE_PACKAGE_M2K" -DWITH_SIGROK="$ENABLE_PACKAGE_M2K" -DWITH_PYTHON=OFF)
 	if [ "$ENABLE_PACKAGE_M2K" = ON ]; then
+		# Dependency installation runs in a separate process; restore the selected
+		# interpreter's pkg-config path for libsigrokdecode's Requires.private.
+		export PKG_CONFIG_PATH="$(brew --prefix python@3.11)/lib/pkgconfig:$STAGING_AREA_DEPS/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 		m2k_options+=(-DWITH_PYTHON=ON -DBOOST_ROOT="$(brew --prefix boost@1.85)"
 			-DCMAKE_PREFIX_PATH="${QT};${STAGING_AREA_DEPS};$(brew --prefix)"
 			-DPython3_ROOT_DIR="$(brew --prefix python@3.11)"
