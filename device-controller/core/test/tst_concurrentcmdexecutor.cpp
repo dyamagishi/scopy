@@ -22,7 +22,7 @@
 #include "core/pooledcmdexecutor.h"
 #include "core/command.h"
 
-#include <QElapsedTimer>
+#include <QSemaphore>
 #include <QTest>
 
 #include <cerrno>
@@ -52,6 +52,29 @@ private:
 	Result<void> m_result{Unexpected{Error{-ENODATA, QStringLiteral("command not executed")}}};
 };
 
+// Hold workers until the test releases them. This proves overlap and keeps the
+// command being cancelled queued, independently of host speed and scheduling.
+class GatedCommand : public Command
+{
+public:
+	GatedCommand(QSemaphore &started, QSemaphore &release, void *resource = nullptr)
+		: Command(resource)
+		, m_started(started)
+		, m_release(release)
+	{}
+
+protected:
+	void run() override
+	{
+		m_started.release();
+		m_release.acquire();
+	}
+
+private:
+	QSemaphore &m_started;
+	QSemaphore &m_release;
+};
+
 class TestPooledCmdExecutor : public QObject
 {
 	Q_OBJECT
@@ -60,65 +83,66 @@ private slots:
 	void cancelByResource();
 	void cancelById();
 	void pendingCount();
+
+private:
+	void queuedCancellation(bool byResource);
 };
 
 void TestPooledCmdExecutor::parallelExecution()
 {
 	PooledCmdExecutor exec(4);
-	SlowCommand c1(100);
-	SlowCommand c2(100);
-
-	QElapsedTimer timer;
-	timer.start();
+	QSemaphore started, release;
+	GatedCommand c1(started, release);
+	GatedCommand c2(started, release);
 
 	auto f1 = exec.execute(&c1);
 	auto f2 = exec.execute(&c2);
+	const bool overlapped = started.tryAcquire(2, 5000);
+	// Always unblock and join before asserting, including on failure.
+	release.release(2);
 	f1.waitForFinished();
 	f2.waitForFinished();
 
-	qint64 elapsed = timer.elapsed();
-	QVERIFY(elapsed < 180);
-	QVERIFY(bool(c1.result()));
-	QVERIFY(bool(c2.result()));
+	QVERIFY2(overlapped, "Both commands must start before either is released");
 }
 
 void TestPooledCmdExecutor::cancelByResource()
 {
-	int resource = 0;
-	PooledCmdExecutor exec(4);
-	SlowCommand c1(100, &resource);
-	SlowCommand c2(0, &resource);
-
-	auto f1 = exec.execute(&c1);
-	auto f2 = exec.execute(&c2);
-	exec.cancelByResource(&resource);
-
-	f2.waitForFinished();
+	queuedCancellation(true);
 }
 
-void TestPooledCmdExecutor::cancelById()
+void TestPooledCmdExecutor::cancelById() { queuedCancellation(false); }
+
+void TestPooledCmdExecutor::queuedCancellation(bool byResource)
 {
 	int resource = 0;
 	PooledCmdExecutor exec(2);
-	SlowCommand c1(100, &resource);
-	SlowCommand c2(100, &resource);
-	SlowCommand c3(200, &resource);
+	QSemaphore started, release;
+	GatedCommand c1(started, release, &resource);
+	GatedCommand c2(started, release, &resource);
+	SlowCommand c3(0, &resource);
 
 	auto f1 = exec.execute(&c1);
 	auto f2 = exec.execute(&c2);
+	const bool workersOccupied = started.tryAcquire(2, 5000);
 	auto f3 = exec.execute(&c3);
 
-	exec.cancelById(c3.id());
-
-	QElapsedTimer timer;
-	timer.start();
+	if(byResource) {
+		exec.cancelByResource(&resource);
+	} else {
+		exec.cancelById(c3.id());
+	}
+	const bool cancelledWhileQueued = c3.isCancelled();
+	release.release(2);
 
 	f1.waitForFinished();
 	f2.waitForFinished();
 
-	QVERIFY(c3.isCancelled());
 	f3.waitForFinished();
-	QVERIFY(c3.isCancelled() && timer.elapsed() < 150);
+	QVERIFY2(workersOccupied, "Both workers must remain occupied while cancelling the queued command");
+	QVERIFY(cancelledWhileQueued);
+	QVERIFY(c3.isCancelled());
+	QVERIFY2(!bool(c3.result()), "A cancelled queued command must not execute run()");
 }
 
 void TestPooledCmdExecutor::pendingCount()
